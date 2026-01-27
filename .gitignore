@@ -12,3 +12,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# LLM/Claude settings 
+.claude
+.cursor
