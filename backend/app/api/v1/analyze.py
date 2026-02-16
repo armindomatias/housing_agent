@@ -41,7 +41,7 @@ class AnalyzeResponse(BaseModel):
     estimate: RenovationEstimate | None = None
     error: str | None = None
 
-
+# Called by the analyze_property_stream async function exposed through FastAPI POST request
 async def stream_analysis(
     url: str, user_id: str, settings: Settings
 ) -> AsyncGenerator[str, None]:
@@ -77,6 +77,7 @@ async def stream_analysis(
                     actual_state = list(state.values())[0]
 
                 events = actual_state.get("stream_events", [])
+                # use the counter of sent_events to just retrieve the last one 
                 new_events = events[sent_events:]
 
                 for event in new_events:
@@ -86,6 +87,7 @@ async def stream_analysis(
                     else:
                         event_data = event
 
+                    # after event processed, yield the event/state as a json 
                     yield json.dumps(event_data, ensure_ascii=False)
                     sent_events += 1
 
@@ -124,6 +126,8 @@ async def analyze_property_stream(
       -d '{"url": "https://www.idealista.pt/imovel/12345678/"}'
     ```
     """
+
+    # the EventSourceResponse works for Streaming events to the client over HTTP while data is generated 
     return EventSourceResponse(
         stream_analysis(str(request.url), request.user_id, settings),
         media_type="text/event-stream",

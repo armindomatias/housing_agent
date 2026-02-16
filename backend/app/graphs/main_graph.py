@@ -44,7 +44,7 @@ async def scrape_node(state: GraphState, *, settings: Settings) -> GraphState:
     url = state["url"]
     events = list(state.get("stream_events", []))
 
-    # Emit start event
+    # Emit start event (not yielded, just adding, then yielded after the node executes)
     events.append(
         StreamEvent(
             type="status",

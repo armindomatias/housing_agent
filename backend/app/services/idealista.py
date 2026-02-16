@@ -96,6 +96,7 @@ class IdealistaService:
             results.append(json.loads(stripped))
         return results
 
+    # Main method that calls the Apify Actor 
     async def _request_with_retry(self, url: str, payload: dict) -> httpx.Response:
         """
         POST to the given URL with retry logic for transient failures.
