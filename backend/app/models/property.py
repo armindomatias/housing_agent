@@ -85,6 +85,15 @@ class PropertyData(BaseModel):
     location: str = Field(default="", description="Property location")
     description: str = Field(default="", description="Listing description")
     image_urls: list[str] = Field(default_factory=list, description="List of image URLs")
+    operation: str = Field(default="", description="Listing type: sale or rent")
+    property_type: str = Field(default="", description="Property type: flat, house, etc.")
+    latitude: float | None = Field(default=None, description="Property latitude")
+    longitude: float | None = Field(default=None, description="Property longitude")
+    image_tags: dict[str, str] = Field(
+        default_factory=dict, description="Map of image URL to room tag from Idealista"
+    )
+    has_elevator: bool | None = Field(default=None, description="Building has elevator")
+    condition_status: str = Field(default="", description="Property condition: good, bad, or unknown")
     raw_data: dict[str, Any] = Field(default_factory=dict, description="Raw scraped data")
 
 

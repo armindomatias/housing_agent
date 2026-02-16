@@ -102,10 +102,41 @@ class TestPropertyData:
         assert pd.image_urls == []
         assert pd.raw_data == {}
 
+    def test_new_fields_defaults(self):
+        pd = PropertyData(url="https://www.idealista.pt/imovel/123/")
+        assert pd.operation == ""
+        assert pd.property_type == ""
+        assert pd.latitude is None
+        assert pd.longitude is None
+        assert pd.image_tags == {}
+        assert pd.has_elevator is None
+        assert pd.condition_status == ""
+
     def test_full_property(self, sample_property_data: PropertyData):
         assert sample_property_data.price == 185000.0
         assert sample_property_data.num_rooms == 2
         assert len(sample_property_data.image_urls) == 3
+
+    def test_full_property_with_new_fields(self):
+        pd = PropertyData(
+            url="https://www.idealista.pt/imovel/123/",
+            title="Flat T3",
+            price=300000.0,
+            operation="sale",
+            property_type="flat",
+            latitude=38.75,
+            longitude=-9.20,
+            image_tags={"img1.jpg": "kitchen", "img2.jpg": "bedroom"},
+            has_elevator=True,
+            condition_status="good",
+        )
+        assert pd.operation == "sale"
+        assert pd.property_type == "flat"
+        assert pd.latitude == 38.75
+        assert pd.longitude == -9.20
+        assert pd.image_tags == {"img1.jpg": "kitchen", "img2.jpg": "bedroom"}
+        assert pd.has_elevator is True
+        assert pd.condition_status == "good"
 
 
 class TestRenovationItem:
