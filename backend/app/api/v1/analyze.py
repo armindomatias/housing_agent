@@ -9,6 +9,7 @@ Endpoints:
 - POST /api/v1/analyze/sync - Analyze a property without streaming (simpler)
 """
 
+import inspect
 import json
 import logging
 from typing import AsyncGenerator
@@ -31,7 +32,8 @@ class AnalyzeRequest(BaseModel):
     """Request body for property analysis."""
 
     url: HttpUrl = Field(description="Idealista listing URL")
-    user_id: str = Field(default="", description="Optional user ID for tracking")
+    user_id: str = Field(
+        default="", description="Optional user ID for tracking")
 
 
 class AnalyzeResponse(BaseModel):
@@ -42,6 +44,8 @@ class AnalyzeResponse(BaseModel):
     error: str | None = None
 
 # Called by the analyze_property_stream async function exposed through FastAPI POST request
+
+
 async def stream_analysis(
     url: str, user_id: str, settings: Settings
 ) -> AsyncGenerator[str, None]:
@@ -67,6 +71,11 @@ async def stream_analysis(
     try:
         # Run the graph - we'll check for new events after each node
         async for state in graph.astream(initial_state):
+            # Some LangGraph configurations may yield a coroutine instead of a plain dict.
+            # If that happens, await it here so we always work with the resolved state.
+            if inspect.iscoroutine(state):
+                state = await state
+
             # Get new events from state
             # Note: astream yields state after each node, so we can check for new events
             if isinstance(state, dict):
@@ -77,7 +86,7 @@ async def stream_analysis(
                     actual_state = list(state.values())[0]
 
                 events = actual_state.get("stream_events", [])
-                # use the counter of sent_events to just retrieve the last one 
+                # use the counter of sent_events to just retrieve the last one
                 new_events = events[sent_events:]
 
                 for event in new_events:
@@ -87,7 +96,7 @@ async def stream_analysis(
                     else:
                         event_data = event
 
-                    # after event processed, yield the event/state as a json 
+                    # after event processed, yield the event/state as a json
                     yield json.dumps(event_data, ensure_ascii=False)
                     sent_events += 1
 
@@ -127,7 +136,7 @@ async def analyze_property_stream(
     ```
     """
 
-    # the EventSourceResponse works for Streaming events to the client over HTTP while data is generated 
+    # the EventSourceResponse works for Streaming events to the client over HTTP while data is generated
     return EventSourceResponse(
         stream_analysis(str(request.url), request.user_id, settings),
         media_type="text/event-stream",

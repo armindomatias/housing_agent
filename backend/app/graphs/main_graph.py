@@ -254,7 +254,8 @@ async def group_node(state: GraphState, *, settings: Settings) -> GraphState:
             message=f"Agrupadas {sum(len(v) for v in room_groups.values())} fotos em {len(room_groups)} divisões",
             step=3,
             total_steps=5,
-            data={"num_rooms": len(room_groups), "rooms": list(room_groups.keys())},
+            data={"num_rooms": len(room_groups),
+                  "rooms": list(room_groups.keys())},
         )
     )
 
@@ -314,7 +315,8 @@ async def estimate_node(state: GraphState, *, settings: Settings) -> GraphState:
             image_urls = [c.image_url for c in classifications]
 
             # Get room label for progress message
-            room_label = estimator._classifier.get_room_label(room_type, room_number)
+            room_label = estimator._classifier.get_room_label(
+                room_type, room_number)
 
             events.append(
                 StreamEvent(
@@ -478,13 +480,31 @@ def build_renovation_graph(settings: Settings) -> StateGraph:
     # Create the graph with dict state
     graph = StateGraph(dict)
 
-    # Add nodes - each node receives state and settings
-    # Using functools.partial equivalent via lambda to inject settings
-    graph.add_node("scrape", lambda s: scrape_node(s, settings=settings))
-    graph.add_node("classify", lambda s: classify_node(s, settings=settings))
-    graph.add_node("group", lambda s: group_node(s, settings=settings))
-    graph.add_node("estimate", lambda s: estimate_node(s, settings=settings))
-    graph.add_node("summarize", lambda s: summarize_node(s, settings=settings))
+    # Add nodes - each node receives state and settings.
+    # IMPORTANT: We wrap each async node in an async function instead of a lambda
+    # so LangGraph correctly detects and awaits the coroutine rather than
+    # treating the node as a sync function that returns an un-awaited coroutine.
+
+    async def scrape_with_settings(state: GraphState) -> GraphState:
+        return await scrape_node(state, settings=settings)
+
+    async def classify_with_settings(state: GraphState) -> GraphState:
+        return await classify_node(state, settings=settings)
+
+    async def group_with_settings(state: GraphState) -> GraphState:
+        return await group_node(state, settings=settings)
+
+    async def estimate_with_settings(state: GraphState) -> GraphState:
+        return await estimate_node(state, settings=settings)
+
+    async def summarize_with_settings(state: GraphState) -> GraphState:
+        return await summarize_node(state, settings=settings)
+
+    graph.add_node("scrape", scrape_with_settings)
+    graph.add_node("classify", classify_with_settings)
+    graph.add_node("group", group_with_settings)
+    graph.add_node("estimate", estimate_with_settings)
+    graph.add_node("summarize", summarize_with_settings)
 
     # Define the flow (linear for MVP)
     graph.set_entry_point("scrape")
