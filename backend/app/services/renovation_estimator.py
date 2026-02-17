@@ -84,7 +84,7 @@ class RenovationEstimatorService:
         content = [{"type": "text", "text": prompt}]
 
         # Add all images for this room (GPT-4 Vision can analyze multiple)
-        for url in image_urls[:6]:  # Limit to 6 images to manage costs/tokens
+        for url in image_urls[:4]:  # Limit to 4 images to manage costs/tokens
             content.append(
                 {
                     "type": "image_url",
@@ -96,7 +96,7 @@ class RenovationEstimatorService:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=1000,
+                max_tokens=2000,  # Increased for detailed room analysis JSON
                 response_format={"type": "json_object"},
             )
 
@@ -140,6 +140,7 @@ class RenovationEstimatorService:
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse room analysis JSON for {room_label}: {e}")
+            logger.debug(f"Raw response content: {response.choices[0].message.content[:500]}")
             return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
         except Exception as e:
             logger.error(f"Error analyzing room {room_label}: {e}")

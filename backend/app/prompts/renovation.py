@@ -29,7 +29,12 @@ Responde APENAS em JSON com este formato exato:
     "room_number": 1,
     "confidence": 0.9,
     "reasoning": "Breve explicação da classificação"
-}"""
+}
+
+IMPORTANTE:
+- room_number deve ser sempre um número inteiro >= 1 (nunca null ou 0)
+- Se houver apenas uma divisão deste tipo, usa 1
+- Se não conseguires distinguir quartos/WCs múltiplos, usa 1"""
 
 
 # Prompt for analyzing a room's condition and estimating renovation costs
@@ -59,7 +64,7 @@ REFERÊNCIAS DE PREÇOS (EUR, Portugal):
 - Instalação elétrica (divisão): 300-800€
 - Canalização (WC completo): 500-2.000€
 
-DEVOLVE APENAS JSON no seguinte formato:
+DEVOLVE APENAS JSON VÁLIDO E COMPLETO no seguinte formato:
 {
     "condition": "razoavel",
     "condition_notes": "Descrição detalhada do estado atual da divisão",
@@ -77,6 +82,12 @@ DEVOLVE APENAS JSON no seguinte formato:
     "confidence": 0.8,
     "reasoning": "Explicação da análise e estimativa"
 }
+
+CRÍTICO:
+- O JSON deve estar completo e bem formatado
+- NUNCA omitas campos obrigatórios (condition, cost_min, cost_max, confidence, reasoning)
+- Se não tiveres certeza, indica confidence baixo (0.3-0.5)
+- Se as fotos forem insuficientes, devolve análise conservadora mas completa
 
 PRIORIDADES:
 - alta: Necessário para habitabilidade ou segurança
@@ -111,4 +122,4 @@ Gera um resumo em português (Portugal) que:
 3. Contextualiza o custo face ao valor do imóvel
 4. Recomenda próximos passos
 
-Responde em formato de texto corrido (2-3 parágrafos), não em JSON."""
+Responde em formato de texto corrido (1-2 parágrafos), não em JSON."""

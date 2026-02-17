@@ -91,7 +91,7 @@ class ImageClassifierService:
                 return ImageClassification(
                     image_url=image_url,
                     room_type=room_type,
-                    room_number=int(data.get("room_number", 1)),
+                    room_number=max(1, int(data.get("room_number") or 1)),
                     confidence=float(data.get("confidence", 0.5)),
                 )
 
