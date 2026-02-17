@@ -78,7 +78,8 @@ class PropertyData(BaseModel):
     url: str = Field(description="Idealista listing URL")
     title: str = Field(default="", description="Listing title")
     price: float = Field(default=0, description="Asking price in EUR")
-    area_m2: float = Field(default=0, description="Property area in square meters")
+    area_m2: float = Field(default=0, description="Constructed area in square meters")
+    usable_area_m2: float = Field(default=0, description="Usable area in square meters")
     num_rooms: int = Field(default=0, description="Number of rooms")
     num_bathrooms: int = Field(default=0, description="Number of bathrooms")
     floor: str = Field(default="", description="Floor number")
@@ -94,6 +95,23 @@ class PropertyData(BaseModel):
     )
     has_elevator: bool | None = Field(default=None, description="Building has elevator")
     condition_status: str = Field(default="", description="Property condition: good, bad, or unknown")
+
+    # Additional property features
+    energy_certificate: str = Field(default="", description="Energy efficiency rating (A+ to F)")
+    has_swimming_pool: bool = Field(default=False, description="Property has swimming pool")
+    has_garden: bool = Field(default=False, description="Property has garden")
+    has_boxroom: bool = Field(default=False, description="Property has storage/boxroom")
+    is_duplex: bool = Field(default=False, description="Property is a duplex")
+    is_penthouse: bool = Field(default=False, description="Property is a penthouse")
+    is_studio: bool = Field(default=False, description="Property is a studio")
+    furniture_status: str = Field(default="", description="Furniture status: furnished, unfurnished, unknown")
+    orientation: str = Field(default="", description="Building orientation (north, south, east, west)")
+    price_per_m2: float = Field(default=0, description="Price per square meter in EUR")
+
+    # Rich media
+    videos: list[dict[str, Any]] = Field(default_factory=list, description="Property video URLs and metadata")
+    virtual_tours: list[dict[str, Any]] = Field(default_factory=list, description="3D tour links (Matterport, etc.)")
+
     raw_data: dict[str, Any] = Field(default_factory=dict, description="Raw scraped data")
 
 

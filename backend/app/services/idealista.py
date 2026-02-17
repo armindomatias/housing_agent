@@ -4,6 +4,7 @@ Idealista scraping service using Apify.
 This service fetches property data from Idealista listings using the
 dz_omar/idealista-scraper-api Apify actor in STANDBY mode. A single POST
 returns results directly via NDJSON — no polling required.
+Then parsed and return the PropertyData pydantic model
 
 Usage:
     service = IdealistaService(apify_token="...")
@@ -22,7 +23,7 @@ from app.models.property import PropertyData
 
 logger = logging.getLogger(__name__)
 
-APIFY_STANDBY_URL = "https://dz-omar--idealista-scraper-api.apify.actor/"
+APIFY_STANDBY_URL = "https://dz-omar--idealista-scraper-api.apify.actor"
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2  # seconds
 
@@ -38,6 +39,7 @@ class IdealistaService:
             apify_token: Apify API token for authentication
         """
         self.apify_token = apify_token
+        #self.apify_standby_url_w_token = f"{APIFY_STANDBY_URL}{apify_token}"
         self._client = httpx.AsyncClient(timeout=120.0)
 
     async def close(self):
@@ -96,7 +98,7 @@ class IdealistaService:
             results.append(json.loads(stripped))
         return results
 
-    # Main method that calls the Apify Actor 
+    # Method that calls the Apify Actor 
     async def _request_with_retry(self, url: str, payload: dict) -> httpx.Response:
         """
         POST to the given URL with retry logic for transient failures.
@@ -150,6 +152,7 @@ class IdealistaService:
 
         raise last_exception  # type: ignore[misc]
 
+    # Method that controls the whole process of scraping and parsing the data 
     async def scrape_property(self, url: str) -> PropertyData:
         """
         Scrape property data from an Idealista listing.
@@ -187,14 +190,25 @@ class IdealistaService:
         if not items:
             raise ValueError(f"Não foi possível obter dados do imóvel {property_id}")
 
+        # Find the property data item (type: "property")
+        property_item = next(
+            (item for item in items if item.get("type") == "property"),
+            None
+        )
+
+        if not property_item:
+            raise ValueError(f"Não foi possível obter dados do imóvel {property_id}")
+
         # Check for actor-level failure
-        if items[0].get("status") == "failed":
-            error_msg = items[0].get("error", "Unknown error")
+        if property_item.get("status") == "failed":
+            error_msg = property_item.get("error", "Unknown error")
             raise ValueError(
                 f"O scraper não conseguiu extrair dados do imóvel: {error_msg}"
             )
 
-        return self._parse_apify_result(url, items[0])
+        # Extract the actual data from the property item
+        property_data = property_item.get("data", {})
+        return self._parse_apify_result(url, property_data)
 
     def _parse_apify_result(self, url: str, data: dict) -> PropertyData:
         """
@@ -229,16 +243,39 @@ class IdealistaService:
         if region:
             location_parts.append(region)
 
+        # Extract orientation from translated texts if available
+        orientation = ""
+        translated_texts = data.get("translatedTexts", {}) or {}
+        char_descriptions = translated_texts.get("characteristicsDescriptions", []) or []
+        for desc_group in char_descriptions:
+            if desc_group.get("key") == "features":
+                for feature in desc_group.get("detailFeatures", []):
+                    phrase = feature.get("phrase", "").lower()
+                    if "orientation" in phrase:
+                        # Extract orientation value (e.g., "Orientation west" -> "west")
+                        orientation = phrase.split("orientation")[-1].strip()
+                        break
+
+        # Calculate price per m2
+        price = float(price_info.get("amount", 0) or data.get("price", 0))
+        constructed_area = float(more.get("constructedArea", 0))
+        price_per_m2 = round(price / constructed_area, 2) if constructed_area > 0 else 0
+
+        # Extract videos and virtual tours
+        videos = multimedia.get("videos", []) or []
+        virtual_tours = multimedia.get("virtual3DTours", []) or []
+
         return PropertyData(
             url=url,
             title=data.get("title") or ubication.get("title", ""),
-            price=float(price_info.get("amount", 0) or data.get("price", 0)),
-            area_m2=float(more.get("constructedArea", 0)),
+            price=price,
+            area_m2=constructed_area,
+            usable_area_m2=float(more.get("usableArea", 0)),
             num_rooms=int(more.get("roomNumber", 0)),
             num_bathrooms=int(more.get("bathNumber", 0)),
             floor=str(more.get("floor", "")),
             location=", ".join(location_parts),
-            description=data.get("description", ""),
+            description=data.get("propertyComment", ""),
             image_urls=image_urls,
             operation=data.get("operation", ""),
             property_type=data.get("extendedPropertyType", ""),
@@ -247,6 +284,20 @@ class IdealistaService:
             image_tags=image_tags,
             has_elevator=more.get("lift"),
             condition_status=str(more.get("status", "")),
+            # Additional features
+            energy_certificate=str(more.get("energyCertificationType", "")),
+            has_swimming_pool=bool(more.get("swimmingPool", False)),
+            has_garden=bool(more.get("garden", False)),
+            has_boxroom=bool(more.get("boxroom", False)),
+            is_duplex=bool(more.get("isDuplex", False)),
+            is_penthouse=bool(more.get("isPenthouse", False)),
+            is_studio=bool(more.get("isStudio", False)),
+            furniture_status=str(more.get("housingFurnitures", "")),
+            orientation=orientation,
+            price_per_m2=price_per_m2,
+            # Rich media
+            videos=videos,
+            virtual_tours=virtual_tours,
             raw_data=data,
         )
 
@@ -282,6 +333,7 @@ class IdealistaService:
             title=f"Apartamento T2 para venda - Mock {property_id}",
             price=185000.0,
             area_m2=75.0,
+            usable_area_m2=68.0,
             num_rooms=2,
             num_bathrooms=1,
             floor="3",
@@ -299,6 +351,20 @@ class IdealistaService:
             image_tags=mock_image_tags,
             has_elevator=False,
             condition_status="good",
+            # Additional features
+            energy_certificate="d",
+            has_swimming_pool=False,
+            has_garden=False,
+            has_boxroom=False,
+            is_duplex=False,
+            is_penthouse=False,
+            is_studio=False,
+            furniture_status="unfurnished",
+            orientation="south",
+            price_per_m2=2466.67,
+            # Rich media
+            videos=[],
+            virtual_tours=[],
             raw_data={"mock": True, "property_id": property_id},
         )
 
@@ -306,3 +372,12 @@ class IdealistaService:
 def create_idealista_service(apify_token: str) -> IdealistaService:
     """Create an IdealistaService instance."""
     return IdealistaService(apify_token)
+
+
+if __name__ == "__main__":
+    apify_token = None
+    idealista_service = IdealistaService(apify_token=apify_token)
+
+    idealista_url = "https://www.idealista.pt/imovel/34810407/"
+    property_data = asyncio.run(idealista_service.scrape_property(url=idealista_url))
+    print(property_data)
