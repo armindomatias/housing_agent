@@ -65,23 +65,23 @@ REFERÊNCIAS DE PREÇOS (EUR, Portugal):
 - Canalização (WC completo): 500-2.000€
 
 DEVOLVE APENAS JSON VÁLIDO E COMPLETO no seguinte formato:
-{
+{{
     "condition": "razoavel",
     "condition_notes": "Descrição detalhada do estado atual da divisão",
     "renovation_items": [
-        {
+        {{
             "item": "Descrição do trabalho",
             "cost_min": 1000,
             "cost_max": 2000,
             "priority": "alta",
             "notes": "Notas adicionais"
-        }
+        }}
     ],
     "cost_min": 5000,
     "cost_max": 10000,
     "confidence": 0.8,
     "reasoning": "Explicação da análise e estimativa"
-}
+}}
 
 CRÍTICO:
 - O JSON deve estar completo e bem formatado
