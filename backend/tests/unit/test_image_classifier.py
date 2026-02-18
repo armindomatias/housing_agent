@@ -1,15 +1,17 @@
 """
 Tests for the ImageClassifier service — pure logic only (no OpenAI calls).
 
-Tests _map_room_type(), group_by_room(), the standalone get_room_label() function,
-and the Apify-tag optimisation (classify_from_tag / classify_images with tags).
+Covers _map_room_type(), group_by_room_simple(), group_by_room() (async),
+cluster_room_images(), _validate_clusters(), _metadata_fallback(),
+the standalone get_room_label() function, classify_from_tag(), and
+classify_images() tag/GPT routing.
 """
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models.property import ImageClassification, RoomType
+from app.models.property import ImageClassification, RoomCluster, RoomType
 from app.services.image_classifier import (
     ImageClassifierService,
     classify_from_tag,
@@ -79,7 +81,7 @@ class TestMapRoomType:
 
 
 class TestGroupByRoom:
-    """Tests for ImageClassifierService.group_by_room()."""
+    """Tests for ImageClassifierService.group_by_room_simple() (naive key-based grouping)."""
 
     def test_groups_same_room(self, classifier: ImageClassifierService):
         classifications = [
@@ -90,7 +92,7 @@ class TestGroupByRoom:
                 image_url="img2.jpg", room_type=RoomType.KITCHEN, room_number=1, confidence=0.85
             ),
         ]
-        grouped = classifier.group_by_room(classifications)
+        grouped = classifier.group_by_room_simple(classifications)
         assert "cozinha_1" in grouped
         assert len(grouped["cozinha_1"]) == 2
 
@@ -103,7 +105,7 @@ class TestGroupByRoom:
                 image_url="img2.jpg", room_type=RoomType.BEDROOM, room_number=1, confidence=0.8
             ),
         ]
-        grouped = classifier.group_by_room(classifications)
+        grouped = classifier.group_by_room_simple(classifications)
         assert len(grouped) == 2
         assert "cozinha_1" in grouped
         assert "quarto_1" in grouped
@@ -117,12 +119,12 @@ class TestGroupByRoom:
                 image_url="img2.jpg", room_type=RoomType.BEDROOM, room_number=2, confidence=0.8
             ),
         ]
-        grouped = classifier.group_by_room(classifications)
+        grouped = classifier.group_by_room_simple(classifications)
         assert "quarto_1" in grouped
         assert "quarto_2" in grouped
 
     def test_empty_list(self, classifier: ImageClassifierService):
-        grouped = classifier.group_by_room([])
+        grouped = classifier.group_by_room_simple([])
         assert grouped == {}
 
 
@@ -335,3 +337,370 @@ class TestClassifyImagesWithTags:
         assert len(calls) == 2
         # total is always the full list length
         assert all(total == 2 for _, total in calls)
+
+
+class TestValidateClusters:
+    """Tests for ImageClassifierService._validate_clusters()."""
+
+    def test_valid_clusters_pass_through(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=1, image_indices=[0, 2], confidence=0.9, visual_cues=""),
+            RoomCluster(room_number=2, image_indices=[1], confidence=0.8, visual_cues=""),
+        ]
+        result = classifier._validate_clusters(clusters, 3)
+        assert result is not None
+        assert len(result) == 2
+        # All indices covered
+        all_indices = {i for c in result for i in c.image_indices}
+        assert all_indices == {0, 1, 2}
+
+    def test_duplicate_index_returns_none(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=1, image_indices=[0, 1], confidence=0.9, visual_cues=""),
+            RoomCluster(room_number=2, image_indices=[1, 2], confidence=0.8, visual_cues=""),
+        ]
+        assert classifier._validate_clusters(clusters, 3) is None
+
+    def test_out_of_range_index_returns_none(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=1, image_indices=[0, 5], confidence=0.9, visual_cues=""),
+        ]
+        assert classifier._validate_clusters(clusters, 3) is None
+
+    def test_missing_images_appended_as_singletons(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=1, image_indices=[0], confidence=0.9, visual_cues=""),
+            # images 1 and 2 are missing
+        ]
+        result = classifier._validate_clusters(clusters, 3)
+        assert result is not None
+        assert len(result) == 3
+        all_indices = {i for c in result for i in c.image_indices}
+        assert all_indices == {0, 1, 2}
+
+    def test_empty_clusters_returns_none(self, classifier: ImageClassifierService):
+        assert classifier._validate_clusters([], 3) is None
+
+    def test_room_numbers_resequenced(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=5, image_indices=[0], confidence=0.9, visual_cues=""),
+            RoomCluster(room_number=10, image_indices=[1], confidence=0.8, visual_cues=""),
+        ]
+        result = classifier._validate_clusters(clusters, 2)
+        assert result is not None
+        numbers = [c.room_number for c in result]
+        assert numbers == [1, 2]
+
+    def test_single_cluster_covering_all_images(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=1, image_indices=[0, 1, 2], confidence=0.7, visual_cues=""),
+        ]
+        result = classifier._validate_clusters(clusters, 3)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].image_indices == [0, 1, 2]
+
+    def test_negative_index_returns_none(self, classifier: ImageClassifierService):
+        clusters = [
+            RoomCluster(room_number=1, image_indices=[-1, 0], confidence=0.9, visual_cues=""),
+        ]
+        assert classifier._validate_clusters(clusters, 2) is None
+
+
+class TestMetadataFallback:
+    """Tests for ImageClassifierService._metadata_fallback()."""
+
+    def test_even_distribution(self):
+        result = ImageClassifierService._metadata_fallback(6, 2)
+        assert len(result) == 2
+        assert len(result[0].image_indices) == 3
+        assert len(result[1].image_indices) == 3
+        # All indices covered exactly once
+        all_indices = {i for c in result for i in c.image_indices}
+        assert all_indices == set(range(6))
+
+    def test_uneven_distribution(self):
+        result = ImageClassifierService._metadata_fallback(7, 3)
+        assert len(result) == 3
+        sizes = sorted([len(c.image_indices) for c in result], reverse=True)
+        assert sizes == [3, 2, 2]
+        all_indices = {i for c in result for i in c.image_indices}
+        assert all_indices == set(range(7))
+
+    def test_no_expected_rooms_one_per_image(self):
+        result = ImageClassifierService._metadata_fallback(5, None)
+        assert len(result) == 5
+        for i, cluster in enumerate(result):
+            assert cluster.image_indices == [i]
+
+    def test_zero_images_returns_empty(self):
+        result = ImageClassifierService._metadata_fallback(0, 2)
+        assert result == []
+
+    def test_confidence_is_low_for_fallback(self):
+        result = ImageClassifierService._metadata_fallback(4, 2)
+        for cluster in result:
+            assert cluster.confidence == 0.3
+
+
+class TestClusterRoomImages:
+    """Tests for ImageClassifierService.cluster_room_images() (mocked OpenAI)."""
+
+    @pytest.mark.asyncio
+    async def test_single_image_no_api_call(self, classifier: ImageClassifierService):
+        """Single image should return a single cluster without any API call."""
+        with patch.object(classifier, "client") as mock_client:
+            result = await classifier.cluster_room_images(
+                RoomType.BEDROOM, ["http://img/bed1.jpg"]
+            )
+
+        mock_client.chat.completions.create.assert_not_called()
+        assert len(result) == 1
+        assert result[0].image_indices == [0]
+        assert result[0].confidence == 1.0
+
+    @pytest.mark.asyncio
+    async def test_multiple_images_calls_gpt_and_parses_clusters(
+        self, classifier: ImageClassifierService
+    ):
+        """Multiple images should trigger a GPT call and return parsed clusters."""
+        gpt_response_json = """{
+            "clusters": [
+                {"room_number": 1, "image_indices": [0, 2], "confidence": 0.85, "visual_cues": "Same bed"},
+                {"room_number": 2, "image_indices": [1], "confidence": 0.75, "visual_cues": "Different floor"}
+            ],
+            "total_rooms": 2,
+            "reasoning": "Two distinct rooms"
+        }"""
+
+        mock_response = AsyncMock()
+        mock_response.choices = [AsyncMock()]
+        mock_response.choices[0].message.content = gpt_response_json
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await classifier.cluster_room_images(
+                RoomType.BEDROOM,
+                ["http://img/1.jpg", "http://img/2.jpg", "http://img/3.jpg"],
+            )
+
+        assert len(result) == 2
+        assert result[0].image_indices == [0, 2]
+        assert result[1].image_indices == [1]
+
+    @pytest.mark.asyncio
+    async def test_api_error_falls_back_to_single_group(
+        self, classifier: ImageClassifierService
+    ):
+        """On API error, return a single cluster containing all images."""
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=Exception("Network error"),
+        ):
+            result = await classifier.cluster_room_images(
+                RoomType.BEDROOM, ["http://img/1.jpg", "http://img/2.jpg"]
+            )
+
+        assert len(result) == 1
+        assert result[0].image_indices == [0, 1]
+        assert result[0].confidence == 0.3
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_from_gpt_falls_back(self, classifier: ImageClassifierService):
+        """Invalid JSON response should fall back to a single group."""
+        mock_response = AsyncMock()
+        mock_response.choices = [AsyncMock()]
+        mock_response.choices[0].message.content = "not valid json {"
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await classifier.cluster_room_images(
+                RoomType.BATHROOM, ["http://img/1.jpg", "http://img/2.jpg"]
+            )
+
+        assert len(result) == 1
+        assert result[0].confidence == 0.3
+
+    @pytest.mark.asyncio
+    async def test_valid_two_cluster_response(self, classifier: ImageClassifierService):
+        """A valid 2-cluster response maps images to correct rooms."""
+        gpt_response_json = """{
+            "clusters": [
+                {"room_number": 1, "image_indices": [0], "confidence": 0.9, "visual_cues": "Oak floor"},
+                {"room_number": 2, "image_indices": [1, 2], "confidence": 0.8, "visual_cues": "Tile floor"}
+            ],
+            "total_rooms": 2,
+            "reasoning": "Different flooring"
+        }"""
+
+        mock_response = AsyncMock()
+        mock_response.choices = [AsyncMock()]
+        mock_response.choices[0].message.content = gpt_response_json
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ):
+            result = await classifier.cluster_room_images(
+                RoomType.BEDROOM,
+                ["http://img/1.jpg", "http://img/2.jpg", "http://img/3.jpg"],
+            )
+
+        assert len(result) == 2
+        cluster_1 = next(c for c in result if c.room_number == 1)
+        cluster_2 = next(c for c in result if c.room_number == 2)
+        assert cluster_1.image_indices == [0]
+        assert set(cluster_2.image_indices) == {1, 2}
+
+
+class TestGroupByRoomAsync:
+    """Tests for the async ImageClassifierService.group_by_room()."""
+
+    def _make_classification(
+        self,
+        url: str,
+        room_type: RoomType,
+        room_number: int = 1,
+        confidence: float = 0.9,
+    ) -> ImageClassification:
+        return ImageClassification(
+            image_url=url,
+            room_type=room_type,
+            room_number=room_number,
+            confidence=confidence,
+        )
+
+    @pytest.mark.asyncio
+    async def test_singleton_types_skip_clustering(self, classifier: ImageClassifierService):
+        """KITCHEN and LIVING_ROOM should go into room_number=1 without any API call."""
+        classifications = [
+            self._make_classification("k1.jpg", RoomType.KITCHEN),
+            self._make_classification("k2.jpg", RoomType.KITCHEN),
+            self._make_classification("s1.jpg", RoomType.LIVING_ROOM),
+        ]
+
+        with patch.object(
+            classifier, "cluster_room_images", new_callable=AsyncMock
+        ) as mock_cluster:
+            grouped = await classifier.group_by_room(classifications)
+
+        mock_cluster.assert_not_called()
+        assert "cozinha_1" in grouped
+        assert len(grouped["cozinha_1"]) == 2
+        assert "sala_1" in grouped
+
+    @pytest.mark.asyncio
+    async def test_multi_room_types_trigger_clustering(self, classifier: ImageClassifierService):
+        """BEDROOM bucket with >1 image must call cluster_room_images()."""
+        classifications = [
+            self._make_classification("b1.jpg", RoomType.BEDROOM),
+            self._make_classification("b2.jpg", RoomType.BEDROOM),
+            self._make_classification("b3.jpg", RoomType.BEDROOM),
+        ]
+
+        fake_clusters = [
+            RoomCluster(room_number=1, image_indices=[0, 2], confidence=0.85, visual_cues=""),
+            RoomCluster(room_number=2, image_indices=[1], confidence=0.75, visual_cues=""),
+        ]
+
+        with patch.object(
+            classifier,
+            "cluster_room_images",
+            new_callable=AsyncMock,
+            return_value=fake_clusters,
+        ):
+            grouped = await classifier.group_by_room(classifications, num_rooms=2)
+
+        assert "quarto_1" in grouped
+        assert "quarto_2" in grouped
+        assert len(grouped["quarto_1"]) == 2
+        assert len(grouped["quarto_2"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_mixed_types_correct_routing(self, classifier: ImageClassifierService):
+        """Bedroom clusters, kitchen does not."""
+        classifications = [
+            self._make_classification("k1.jpg", RoomType.KITCHEN),
+            self._make_classification("b1.jpg", RoomType.BEDROOM),
+            self._make_classification("b2.jpg", RoomType.BEDROOM),
+        ]
+
+        fake_clusters = [
+            RoomCluster(room_number=1, image_indices=[0], confidence=0.8, visual_cues=""),
+            RoomCluster(room_number=2, image_indices=[1], confidence=0.8, visual_cues=""),
+        ]
+
+        with patch.object(
+            classifier,
+            "cluster_room_images",
+            new_callable=AsyncMock,
+            return_value=fake_clusters,
+        ) as mock_cluster:
+            grouped = await classifier.group_by_room(classifications)
+
+        # cluster_room_images called for bedrooms only
+        mock_cluster.assert_called_once()
+        assert "cozinha_1" in grouped
+        assert "quarto_1" in grouped
+        assert "quarto_2" in grouped
+
+    @pytest.mark.asyncio
+    async def test_clustering_failure_uses_metadata_fallback(
+        self, classifier: ImageClassifierService
+    ):
+        """When cluster_room_images returns a single group (fallback), metadata fallback applies."""
+        classifications = [
+            self._make_classification("b1.jpg", RoomType.BEDROOM),
+            self._make_classification("b2.jpg", RoomType.BEDROOM),
+            self._make_classification("b3.jpg", RoomType.BEDROOM),
+            self._make_classification("b4.jpg", RoomType.BEDROOM),
+        ]
+
+        # Simulate GPT returning invalid output → cluster_room_images single-group fallback
+        single_cluster = [
+            RoomCluster(room_number=1, image_indices=[0, 1, 2, 3], confidence=0.3, visual_cues="")
+        ]
+
+        with patch.object(
+            classifier,
+            "cluster_room_images",
+            new_callable=AsyncMock,
+            return_value=single_cluster,
+        ):
+            grouped = await classifier.group_by_room(classifications, num_rooms=2)
+
+        # All images should be covered (either in one or two groups)
+        all_images = {c.image_url for v in grouped.values() for c in v}
+        assert all_images == {"b1.jpg", "b2.jpg", "b3.jpg", "b4.jpg"}
+
+    @pytest.mark.asyncio
+    async def test_empty_classifications_returns_empty(self, classifier: ImageClassifierService):
+        grouped = await classifier.group_by_room([])
+        assert grouped == {}
+
+    @pytest.mark.asyncio
+    async def test_single_bedroom_skips_clustering(self, classifier: ImageClassifierService):
+        """A single image of a multi-room type should not trigger clustering."""
+        classifications = [
+            self._make_classification("b1.jpg", RoomType.BEDROOM),
+        ]
+
+        with patch.object(
+            classifier, "cluster_room_images", new_callable=AsyncMock
+        ) as mock_cluster:
+            grouped = await classifier.group_by_room(classifications)
+
+        mock_cluster.assert_not_called()
+        assert "quarto_1" in grouped

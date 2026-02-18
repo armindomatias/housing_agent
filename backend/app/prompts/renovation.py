@@ -101,6 +101,49 @@ IMPORTANTE:
 - Indica sempre um intervalo (min-max) realista"""
 
 
+# Prompt for clustering photos of the same room type into distinct physical rooms
+ROOM_CLUSTERING_PROMPT = """Analisa estas {num_images} fotografias de {room_type_label} de um imóvel em Portugal.
+
+OBJETIVO: Agrupa as fotografias por divisão FÍSICA. Fotografias que mostram a mesma divisão (mesmo espaço físico, possivelmente de ângulos diferentes) devem pertencer ao mesmo grupo.
+
+INSTRUÇÕES:
+1. Compara elementos visuais entre as fotografias: mobília, cores das paredes, pavimento, janelas, iluminação, decoração
+2. Fotografias do MESMO espaço físico terão elementos consistentes (mesmo chão, mesmas janelas, mesma mobília)
+3. Fotografias de espaços DIFERENTES terão elementos distintos
+
+REGRA CRÍTICA - PREFERIR SEPARAR:
+- Em caso de dúvida, coloca fotografias em grupos SEPARADOS
+- É MELHOR criar grupos a mais do que juntar fotografias de divisões diferentes
+- Só agrupa fotografias quando tens CERTEZA que mostram o mesmo espaço
+
+RESPONDE APENAS em JSON com este formato exato:
+{{
+    "clusters": [
+        {{
+            "room_number": 1,
+            "image_indices": [0, 3],
+            "confidence": 0.85,
+            "visual_cues": "Mesmo pavimento em madeira clara, mesma cama com colcha azul, mesma janela com cortinas brancas"
+        }},
+        {{
+            "room_number": 2,
+            "image_indices": [1, 2, 4],
+            "confidence": 0.75,
+            "visual_cues": "Pavimento em cerâmico cinzento, beliche, parede com papel de parede infantil"
+        }}
+    ],
+    "total_rooms": 2,
+    "reasoning": "Explicação geral da análise"
+}}
+
+IMPORTANTE:
+- image_indices referem-se à posição de cada fotografia (0-indexed) na lista fornecida
+- TODAS as fotografias devem aparecer em exatamente UM cluster
+- room_number começa em 1 e incrementa sequencialmente
+- confidence entre 0.0 e 1.0 (quanto mais certeza na separação, mais alto)
+- Se todas as fotografias parecem mostrar a MESMA divisão, devolve um único cluster"""
+
+
 # Prompt for generating a final summary of all renovation needs
 SUMMARY_PROMPT = """Com base nas análises individuais de cada divisão, gera um resumo executivo da remodelação necessária para este imóvel.
 

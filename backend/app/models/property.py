@@ -43,6 +43,23 @@ class ImageClassification(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="Classification confidence score")
 
 
+class RoomCluster(BaseModel):
+    """Result of clustering photos of the same room type into physical rooms."""
+
+    room_number: int = Field(ge=1, description="Sequential room number within this type")
+    image_indices: list[int] = Field(description="0-based indices into the input image list")
+    confidence: float = Field(ge=0.0, le=1.0, description="Clustering confidence")
+    visual_cues: str = Field(default="", description="Visual cues used for clustering")
+
+
+class ClusteringResult(BaseModel):
+    """GPT response for room clustering."""
+
+    clusters: list[RoomCluster] = Field(description="List of room clusters")
+    total_rooms: int = Field(ge=1, description="Total number of distinct rooms found")
+    reasoning: str = Field(default="", description="Overall reasoning")
+
+
 class RenovationItem(BaseModel):
     """A specific renovation item/task for a room."""
 

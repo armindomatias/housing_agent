@@ -213,13 +213,22 @@ async def group_node(
     events.append(
         StreamEvent(
             type="status",
-            message="A agrupar fotografias por divisão...",
+            message="A comparar fotografias para identificar divisões distintas...",
             step=3,
             total_steps=5,
         )
     )
 
-    grouped = classifier_service.group_by_room(classifications)
+    # Extract room/bathroom counts from scraped metadata for smart fallback
+    property_data = state.get("property_data")
+    num_rooms = property_data.num_rooms if property_data else None
+    num_bathrooms = property_data.num_bathrooms if property_data else None
+
+    grouped = await classifier_service.group_by_room(
+        classifications,
+        num_rooms=num_rooms,
+        num_bathrooms=num_bathrooms,
+    )
 
     # Filter out exterior and other non-room images for estimation
     room_groups = {}

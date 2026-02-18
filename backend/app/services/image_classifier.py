@@ -47,10 +47,16 @@ from collections import defaultdict
 
 from openai import AsyncOpenAI
 
-from app.models.property import ImageClassification, RoomType
-from app.prompts.renovation import IMAGE_CLASSIFICATION_PROMPT
+from app.models.property import ImageClassification, RoomCluster, RoomType
+from app.prompts.renovation import IMAGE_CLASSIFICATION_PROMPT, ROOM_CLUSTERING_PROMPT
 
 logger = logging.getLogger(__name__)
+
+# Room types that can have multiple distinct physical rooms and benefit from vision clustering
+MULTI_ROOM_TYPES: set[RoomType] = {RoomType.BEDROOM, RoomType.BATHROOM}
+
+# Maximum images to send in a single clustering API call
+MAX_CLUSTERING_IMAGES = 10
 
 
 def get_room_label(room_type: RoomType, room_number: int) -> str:
@@ -351,32 +357,361 @@ class ImageClassifierService:
 
         return classifications
 
-    def group_by_room(
+    def group_by_room_simple(
         self, classifications: list[ImageClassification]
     ) -> dict[str, list[ImageClassification]]:
         """
-        Group classified images by room.
+        Group classified images by room using the naive key-based approach.
 
-        This is crucial for avoiding duplicate estimates. Multiple photos of the same
-        kitchen should be grouped together and analyzed as ONE kitchen, not counted
-        as multiple kitchens.
+        Groups by composite key ``{room_type}_{room_number}``. This is the
+        original strategy — fast but unable to detect that multiple photos
+        with room_number=1 may show different physical rooms.
+
+        Kept as a reference implementation and for use in tests.
 
         Args:
             classifications: List of image classifications
 
         Returns:
-            Dictionary mapping room keys (e.g., "cozinha_1", "quarto_2") to list of
-            classifications for that room
+            Dictionary mapping room keys (e.g., "cozinha_1", "quarto_2") to
+            list of classifications for that room.
         """
         grouped: dict[str, list[ImageClassification]] = defaultdict(list)
 
         for classification in classifications:
-            # Create a unique key for this room
-            # e.g., "cozinha_1", "quarto_1", "quarto_2", "casa_de_banho_1"
             room_key = f"{classification.room_type.value}_{classification.room_number}"
             grouped[room_key].append(classification)
 
         return dict(grouped)
+
+    async def cluster_room_images(
+        self,
+        room_type: RoomType,
+        image_urls: list[str],
+        image_detail: str = "low",
+    ) -> list[RoomCluster]:
+        """
+        Use GPT-4o-mini vision to cluster photos of one room type into physical rooms.
+
+        Sends all photos of the same room type (e.g. all bedroom photos) to GPT
+        in a single call so it can compare them visually and determine which ones
+        show the same physical room.
+
+        Args:
+            room_type: The room type being clustered (e.g. BEDROOM).
+            image_urls: URLs of all images of this room type.
+            image_detail: GPT image detail level ("low" or "auto").
+
+        Returns:
+            List of RoomCluster objects. On any failure returns a single cluster
+            containing all images with confidence=0.3.
+        """
+        if len(image_urls) <= 1:
+            return [
+                RoomCluster(
+                    room_number=1,
+                    image_indices=list(range(len(image_urls))),
+                    confidence=1.0,
+                    visual_cues="",
+                )
+            ]
+
+        # Get base label ("Quarto", "Casa de Banho") — split on space, take first word pair
+        room_label = get_room_label(room_type, 1)
+        prompt_text = ROOM_CLUSTERING_PROMPT.format(
+            num_images=len(image_urls),
+            room_type_label=room_label,
+        )
+
+        content: list[dict] = [{"type": "text", "text": prompt_text}]
+        for url in image_urls:
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url, "detail": image_detail},
+                }
+            )
+
+        try:
+            async with self.semaphore:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": content}],
+                    max_tokens=1000,
+                    response_format={"type": "json_object"},
+                )
+
+            raw = response.choices[0].message.content
+            data = json.loads(raw)
+
+            raw_clusters = data.get("clusters", [])
+            parsed: list[RoomCluster] = []
+            for c in raw_clusters:
+                parsed.append(
+                    RoomCluster(
+                        room_number=int(c.get("room_number", 1)),
+                        image_indices=[int(i) for i in c.get("image_indices", [])],
+                        confidence=float(c.get("confidence", 0.5)),
+                        visual_cues=str(c.get("visual_cues", "")),
+                    )
+                )
+
+            validated = self._validate_clusters(parsed, len(image_urls))
+            if validated is None:
+                logger.warning(
+                    f"GPT clustering output invalid for {room_type.value}, "
+                    "falling back to single-group"
+                )
+                return [
+                    RoomCluster(
+                        room_number=1,
+                        image_indices=list(range(len(image_urls))),
+                        confidence=0.3,
+                        visual_cues="",
+                    )
+                ]
+            return validated
+
+        except Exception as e:
+            logger.error(f"Error clustering {room_type.value} images: {e}")
+            return [
+                RoomCluster(
+                    room_number=1,
+                    image_indices=list(range(len(image_urls))),
+                    confidence=0.3,
+                    visual_cues="",
+                )
+            ]
+
+    def _validate_clusters(
+        self,
+        clusters: list[RoomCluster],
+        num_images: int,
+    ) -> list[RoomCluster] | None:
+        """
+        Validate and normalise GPT clustering output.
+
+        Rules:
+        - Every index 0..num_images-1 must appear in exactly one cluster.
+        - Duplicate or out-of-range indices → return None (signal fallback).
+        - Missing indices → appended as individual singleton clusters.
+        - room_numbers are re-sequenced 1..N at the end.
+
+        Args:
+            clusters: Raw clusters from GPT.
+            num_images: Total number of images that were clustered.
+
+        Returns:
+            Validated and renumbered list, or None if GPT output is corrupt.
+        """
+        if not clusters:
+            return None
+
+        seen: set[int] = set()
+        for cluster in clusters:
+            for idx in cluster.image_indices:
+                if idx < 0 or idx >= num_images:
+                    logger.warning(f"Cluster index {idx} out of range [0, {num_images})")
+                    return None
+                if idx in seen:
+                    logger.warning(f"Duplicate cluster index {idx}")
+                    return None
+                seen.add(idx)
+
+        # Append any images GPT omitted as individual singleton clusters
+        result = list(clusters)
+        for missing_idx in range(num_images):
+            if missing_idx not in seen:
+                result.append(
+                    RoomCluster(
+                        room_number=len(result) + 1,
+                        image_indices=[missing_idx],
+                        confidence=0.5,
+                        visual_cues="",
+                    )
+                )
+
+        # Re-number sequentially 1..N
+        for i, cluster in enumerate(result, start=1):
+            cluster.room_number = i
+
+        return result
+
+    @staticmethod
+    def _metadata_fallback(
+        num_images: int,
+        expected_rooms: int | None,
+    ) -> list[RoomCluster]:
+        """
+        Create a safe fallback clustering when GPT is unavailable or fails.
+
+        Strategy:
+        - If expected_rooms is known: distribute images evenly across that many rooms.
+        - If expected_rooms is None: one image per group (maximum under-grouping).
+
+        Args:
+            num_images: Total number of images to distribute.
+            expected_rooms: Number of physical rooms expected (from property metadata).
+
+        Returns:
+            List of RoomCluster objects covering all images.
+        """
+        if num_images == 0:
+            return []
+
+        if expected_rooms is None or expected_rooms <= 0:
+            return [
+                RoomCluster(
+                    room_number=i + 1,
+                    image_indices=[i],
+                    confidence=0.3,
+                    visual_cues="",
+                )
+                for i in range(num_images)
+            ]
+
+        # Distribute as evenly as possible (e.g., 7 images / 3 rooms → 3, 2, 2)
+        base, remainder = divmod(num_images, expected_rooms)
+        clusters: list[RoomCluster] = []
+        idx = 0
+        for room_num in range(1, expected_rooms + 1):
+            size = base + (1 if room_num <= remainder else 0)
+            clusters.append(
+                RoomCluster(
+                    room_number=room_num,
+                    image_indices=list(range(idx, idx + size)),
+                    confidence=0.3,
+                    visual_cues="",
+                )
+            )
+            idx += size
+
+        return clusters
+
+    async def group_by_room(
+        self,
+        classifications: list[ImageClassification],
+        num_rooms: int | None = None,
+        num_bathrooms: int | None = None,
+        image_detail: str = "low",
+    ) -> dict[str, list[ImageClassification]]:
+        """
+        Group classified images by room using GPT vision clustering for multi-room types.
+
+        Algorithm:
+        1. Pass 1 — bucket by room_type (ignore existing room_number).
+        2. Pass 2 — for BEDROOM and BATHROOM buckets with >1 image:
+             - Send up to MAX_CLUSTERING_IMAGES to cluster_room_images().
+             - For larger buckets: cluster the first batch, then handle overflow.
+             - On failure: fall back to _metadata_fallback().
+           Singleton-type buckets (KITCHEN, etc.) keep room_number=1.
+        3. Run all clustering coroutines concurrently via asyncio.gather.
+
+        Args:
+            classifications: List of image classifications from classify_images().
+            num_rooms: Number of bedrooms from property metadata (for fallback).
+            num_bathrooms: Number of bathrooms from property metadata (for fallback).
+            image_detail: GPT image detail level passed to cluster_room_images().
+
+        Returns:
+            Dictionary mapping room keys (e.g., "quarto_1", "quarto_2") to
+            lists of ImageClassification objects.
+        """
+        if not classifications:
+            return {}
+
+        # Pass 1: bucket by room_type only
+        type_buckets: dict[RoomType, list[ImageClassification]] = defaultdict(list)
+        for c in classifications:
+            type_buckets[c.room_type].append(c)
+
+        # Separate types that need clustering from singletons
+        cluster_tasks: list[tuple[RoomType, list[ImageClassification], int | None]] = []
+        non_multi_buckets: dict[RoomType, list[ImageClassification]] = {}
+
+        for room_type, items in type_buckets.items():
+            if room_type in MULTI_ROOM_TYPES and len(items) > 1:
+                expected = num_rooms if room_type == RoomType.BEDROOM else num_bathrooms
+                cluster_tasks.append((room_type, items, expected))
+            else:
+                non_multi_buckets[room_type] = items
+
+        # Pass 2: run clustering concurrently
+        async def _cluster_one(
+            room_type: RoomType,
+            items: list[ImageClassification],
+            expected_rooms: int | None,
+        ) -> tuple[RoomType, list[RoomCluster]]:
+            urls = [c.image_url for c in items]
+
+            if len(urls) <= MAX_CLUSTERING_IMAGES:
+                clusters = await self.cluster_room_images(room_type, urls, image_detail)
+            else:
+                first_batch = urls[:MAX_CLUSTERING_IMAGES]
+                first_clusters = await self.cluster_room_images(
+                    room_type, first_batch, image_detail
+                )
+
+                overflow_urls = urls[MAX_CLUSTERING_IMAGES:]
+                overflow_start = MAX_CLUSTERING_IMAGES
+
+                if expected_rooms is not None and len(first_clusters) >= expected_rooms:
+                    # Distribute overflow sequentially across existing clusters
+                    for overflow_offset, _ in enumerate(overflow_urls):
+                        target = first_clusters[overflow_offset % len(first_clusters)]
+                        target.image_indices.append(overflow_start + overflow_offset)
+                    clusters = first_clusters
+                else:
+                    # Run a second pass on the overflow to find additional rooms
+                    second_clusters = await self.cluster_room_images(
+                        room_type, overflow_urls, image_detail
+                    )
+                    room_num_offset = len(first_clusters)
+                    offset_second = [
+                        RoomCluster(
+                            room_number=sc.room_number + room_num_offset,
+                            image_indices=[
+                                idx + overflow_start for idx in sc.image_indices
+                            ],
+                            confidence=sc.confidence,
+                            visual_cues=sc.visual_cues,
+                        )
+                        for sc in second_clusters
+                    ]
+                    clusters = first_clusters + offset_second
+
+            validated = self._validate_clusters(clusters, len(items))
+            if validated is None:
+                validated = self._metadata_fallback(len(items), expected_rooms)
+
+            return room_type, validated
+
+        clustering_results: dict[RoomType, list[RoomCluster]] = {}
+        if cluster_tasks:
+            results = await asyncio.gather(
+                *[_cluster_one(rt, items, exp) for rt, items, exp in cluster_tasks]
+            )
+            for room_type, clusters in results:
+                clustering_results[room_type] = clusters
+
+        # Pass 3: build the final grouped dict
+        grouped: dict[str, list[ImageClassification]] = {}
+
+        # Non-multi types: all images into room_number=1
+        for room_type, items in non_multi_buckets.items():
+            room_key = f"{room_type.value}_1"
+            grouped[room_key] = items
+
+        # Multi types: map each ImageClassification to its cluster
+        for room_type, items, _ in cluster_tasks:
+            clusters = clustering_results.get(room_type, [])
+            if not clusters:
+                clusters = self._metadata_fallback(len(items), None)
+            for cluster in clusters:
+                room_key = f"{room_type.value}_{cluster.room_number}"
+                grouped[room_key] = [items[i] for i in cluster.image_indices]
+
+        return grouped
 
 
 # Factory function for dependency injection
