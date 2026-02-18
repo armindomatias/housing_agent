@@ -1,30 +1,25 @@
 """
 Renovation cost estimation service using GPT-4 Vision.
 
-This service analyzes grouped room photos to estimate renovation costs.
-It receives photos already grouped by room (from ImageClassifierService)
-and generates ONE estimate per room, even if there are multiple photos.
+Analyzes grouped room photos and produces one cost estimate per room.
+Photos are pre-grouped by ImageClassifierService so each room is assessed
+as a whole, even when the listing has several angles of the same space.
 
-The estimation uses Portuguese market prices (2024/2025) and always provides
-a min-max range to account for uncertainty.
+Estimates use Portuguese market prices (2024/2025) and always return a
+min–max range to reflect inherent uncertainty from photo-only analysis.
 
-## Parallel Estimation (Branch 3)
+## Concurrency model
 
-Previously, analyze_all_rooms() iterated sequentially — each GPT-4o call had
-to finish before the next room started. For a 5-room property this meant 5 serial
-API round-trips, each taking 5–10 s, for a total of 25–50 s just for estimation.
+analyze_all_rooms() submits one async task per room and collects results
+with asyncio.as_completed(). A semaphore (default: 3 slots) caps concurrent
+GPT-4o calls to stay within rate limits. Progress events fire as each room
+finishes, in whatever order — the frontend only cares about current/total counts.
 
-Now each room analysis runs as a separate async task and they are submitted
-concurrently. A semaphore (default: 3 concurrent calls) prevents us from
-hammering the OpenAI rate limit. asyncio.as_completed() lets us fire progress
-events as soon as each room finishes, in whatever order they complete.
-
-Concrete improvement: a 5-room property that took ~35 s serially now takes
-~12 s concurrently (bounded by the slowest single room call, not the sum).
+For a 5-room property this reduces wall-clock time from ~35 s (serial) to
+~12 s (parallel), bounded by the slowest single call rather than the sum.
 
 Usage:
     estimator = RenovationEstimatorService(openai_api_key="...")
-    # Analyze all rooms in parallel
     analyses = await estimator.analyze_all_rooms(grouped_images, progress_callback)
 """
 
@@ -256,20 +251,13 @@ class RenovationEstimatorService:
         """
         Analyze all rooms concurrently, respecting the semaphore rate limit.
 
-        Previously this method was sequential (await each room, then next).
-        Now all rooms are submitted as concurrent tasks and we collect results
-        via asyncio.as_completed() — identical to how classify_images works.
-
-        The semaphore on analyze_room() caps concurrent GPT-4o calls at
-        self.max_concurrent (default 3), preventing rate-limit errors while
-        still running faster than serial execution.
-
-        Progress callbacks fire as each room completes (out-of-order is fine
-        for the UI — the frontend only needs current/total counts).
+        Submits one bounded coroutine per room via asyncio.as_completed() so
+        progress events fire as each room finishes rather than waiting for all.
+        The semaphore caps concurrent GPT-4o calls at self.max_concurrent (default 3).
 
         Args:
-            grouped_images:   Dict mapping room key → list[ImageClassification].
-                              Produced by ImageClassifierService.group_by_room().
+            grouped_images:    Dict mapping room key → list[ImageClassification].
+                               Produced by ImageClassifierService.group_by_room().
             progress_callback: Optional async callback(current, total, room_analysis)
                                called as each room finishes.
 
@@ -283,14 +271,8 @@ class RenovationEstimatorService:
         async def _bounded_analyze(
             room_type: RoomType, room_number: int, image_urls: list[str]
         ) -> RoomAnalysis:
-            """
-            Thin wrapper that acquires the semaphore before calling analyze_room.
-
-            Keeping the semaphore here (not inside analyze_room) means:
-            - analyze_room stays a clean, testable API wrapper
-            - Concurrency limiting is an orchestration concern of analyze_all_rooms
-            - Tests can patch analyze_room without bypassing the semaphore
-            """
+            # Semaphore lives here, not in analyze_room, so analyze_room stays
+            # a clean, independently testable wrapper around the API call.
             async with self.semaphore:
                 return await self.analyze_room(room_type, room_number, image_urls)
 
@@ -407,11 +389,3 @@ class RenovationEstimatorService:
             overall_confidence=min(1.0, weighted_confidence),
             summary=summary,
         )
-
-
-# Factory function for dependency injection
-def create_renovation_estimator(
-    openai_api_key: str, model: str = "gpt-4o"
-) -> RenovationEstimatorService:
-    """Create a RenovationEstimatorService instance."""
-    return RenovationEstimatorService(openai_api_key, model)

@@ -1,42 +1,36 @@
 """
 Image classification service using GPT-4 Vision.
 
-This service classifies property images to identify which room type they show.
-It handles the two-phase process:
-1. Classify each image individually
-2. Group images by room type for deduplication
+Classifies property images into room types and groups them for deduplication.
+Because a listing often contains multiple photos of the same room, grouping
+ensures we generate exactly one estimate per room, not one per photo.
 
-The grouping is important because property listings often have multiple photos
-of the same room from different angles. We want to analyze all photos of a room
-together but only generate ONE estimate per room.
+## Classification strategy
 
-## Apify Tag Optimisation (Branch 2)
+Two-phase approach, ordered cheapest-first:
 
-Idealista listings scraped via Apify include a free "tag" field on each image
-(e.g. "kitchen", "bedroom", "bathroom"). When those tags are present and
-mappable to our RoomType enum, we skip the GPT-4o-mini call entirely.
+1. **Tag phase (free):** Idealista listings scraped via Apify include a "tag"
+   field on each image (e.g. "kitchen", "bedroom"). When a tag maps to a known
+   RoomType we produce an ImageClassification instantly without any API call.
+   A typical listing saves 60–80 % of classification costs this way.
 
-This means a typical listing saves 60–80 % of classification API calls because
-most images are already labelled by Idealista itself.
+2. **GPT phase (paid):** Images with no tag or an unrecognised tag are sent
+   to GPT-4o-mini with `detail="low"` for cost efficiency.  Up to
+   `max_concurrent` calls run in parallel, rate-limited by a semaphore.
 
 Flow:
-    tagged images  →  classify_from_tag()  →  ImageClassification (confidence=0.9)
-    untagged images →  classify_single_image() via GPT-4o-mini
+    tagged images    →  classify_from_tag()       →  ImageClassification (confidence=0.9)
+    untagged images  →  classify_single_image()   →  ImageClassification (GPT-scored confidence)
 
 Usage:
     classifier = ImageClassifierService(openai_api_key="...")
 
-    # With Apify tags — skips GPT for known tags
     classifications = await classifier.classify_images(
         image_urls, image_tags=property_data.image_tags
     )
-
-    # Without tags — all images go through GPT (original behaviour)
-    classifications = await classifier.classify_images(image_urls)
-
     grouped = classifier.group_by_room(classifications)
 
-    # Standalone label helper (no service instance needed):
+    # Standalone label helper usable anywhere without a service instance:
     label = get_room_label(RoomType.BEDROOM, 2)  # -> "Quarto 2"
 """
 
@@ -95,14 +89,13 @@ def get_room_label(room_type: RoomType, room_number: int) -> str:
 # ---------------------------------------------------------------------------
 # Apify tag → RoomType mapping
 # ---------------------------------------------------------------------------
-# Apify's Idealista scraper includes a "tag" field on each image that mirrors
-# the label Idealista itself assigns. These are English strings. We map every
-# known tag here; any tag NOT in this dict falls back to GPT classification.
+# Apify's Idealista scraper attaches a "tag" string (English) to each image,
+# mirroring the label Idealista itself assigns. Every known tag is mapped here;
+# any tag absent from this dict falls back to GPT classification.
 #
-# Note: room_number is always set to 1 for tag-based results because Apify
-# tags don't carry numbering information (e.g., "bedroom" not "bedroom_2").
-# Multiple bedroom photos will therefore be grouped under "quarto_1". This is
-# acceptable — it still avoids duplicate GPT calls and keeps estimates sane.
+# room_number is always 1 for tag-based results because Apify tags carry no
+# numbering (e.g., "bedroom" not "bedroom_2").  Multiple bedroom photos end up
+# grouped under "quarto_1" — still correct for estimation purposes.
 # ---------------------------------------------------------------------------
 _APIFY_TAG_MAP: dict[str, RoomType] = {
     "kitchen": RoomType.KITCHEN,
@@ -383,6 +376,7 @@ class ImageClassifierService:
             grouped[room_key].append(classification)
 
         return dict(grouped)
+<<<<<<< HEAD
 
     async def cluster_room_images(
         self,
@@ -720,3 +714,5 @@ def create_image_classifier(
 ) -> ImageClassifierService:
     """Create an ImageClassifierService instance."""
     return ImageClassifierService(openai_api_key, model)
+=======
+>>>>>>> docs/architecture-refactor
