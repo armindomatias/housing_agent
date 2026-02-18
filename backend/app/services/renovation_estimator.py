@@ -121,7 +121,15 @@ class RenovationEstimatorService:
             )
 
             # Parse the JSON response
-            data = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content
+            if content is None:
+                logger.warning(
+                    f"OpenAI returned null content for {room_label} "
+                    f"(finish_reason={response.choices[0].finish_reason!r})"
+                )
+                return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
+
+            data = json.loads(content)
 
             # Parse renovation items
             renovation_items = []
@@ -160,7 +168,7 @@ class RenovationEstimatorService:
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse room analysis JSON for {room_label}: {e}")
-            logger.debug(f"Raw response content: {response.choices[0].message.content[:500]}")
+            logger.debug(f"Raw response content: {content[:500] if content else 'None'}")
             return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
         except Exception as e:
             logger.error(f"Error analyzing room {room_label}: {e}")
