@@ -118,15 +118,22 @@ async def classify_node(
     )
 
     try:
+        # Extract Apify image tags from the scraped property data (may be empty dict)
+        # These allow us to skip GPT calls for images that Idealista already labelled.
+        property_data = state.get("property_data")
+        image_tags: dict[str, str] | None = property_data.image_tags if property_data else None
+
         # Progress callback to emit events for each image
         async def progress_callback(
             current: int, total: int, classification: ImageClassification
         ) -> None:
             room_label = get_room_label(classification.room_type, classification.room_number)
+            # High confidence (≥0.9) means tag-based; lower means GPT-based
+            source = "tag" if classification.confidence >= 0.9 else "GPT"
             events.append(
                 StreamEvent(
                     type="progress",
-                    message=f"A classificar foto {current}/{total}: {room_label} detectada",
+                    message=f"A classificar foto {current}/{total}: {room_label} detectada ({source})",
                     step=2,
                     total_steps=5,
                     data={
@@ -134,11 +141,14 @@ async def classify_node(
                         "total": total,
                         "room_type": classification.room_type.value,
                         "confidence": classification.confidence,
+                        "source": source,
                     },
                 )
             )
 
-        classifications = await classifier_service.classify_images(image_urls, progress_callback)
+        classifications = await classifier_service.classify_images(
+            image_urls, image_tags=image_tags, progress_callback=progress_callback
+        )
 
         # Summary of classifications
         room_counts: dict[str, int] = {}
