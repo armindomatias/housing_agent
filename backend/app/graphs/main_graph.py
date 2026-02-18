@@ -11,7 +11,7 @@ This graph orchestrates the entire analysis process:
 Each node emits stream events that are sent to the frontend in real-time.
 
 Usage:
-    graph = build_renovation_graph(settings)
+    graph = build_renovation_graph(settings, idealista_service, classifier_service, estimator_service)
     async for event in graph.astream({"url": "...", "user_id": "..."}):
         # Handle stream events
         pass
@@ -25,7 +25,7 @@ from langgraph.graph import END, StateGraph
 from app.config import Settings
 from app.models.property import ImageClassification, RoomType, StreamEvent
 from app.services.idealista import IdealistaService
-from app.services.image_classifier import ImageClassifierService
+from app.services.image_classifier import ImageClassifierService, get_room_label
 from app.services.renovation_estimator import RenovationEstimatorService
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 GraphState = dict[str, Any]
 
 
-async def scrape_node(state: GraphState, *, settings: Settings) -> GraphState:
+async def scrape_node(state: GraphState, *, idealista_service: IdealistaService) -> GraphState:
     """
     Node 1: Scrape property data from Idealista.
 
@@ -44,7 +44,6 @@ async def scrape_node(state: GraphState, *, settings: Settings) -> GraphState:
     url = state["url"]
     events = list(state.get("stream_events", []))
 
-    # Emit start event (not yielded, just adding, then yielded after the node executes)
     events.append(
         StreamEvent(
             type="status",
@@ -55,14 +54,8 @@ async def scrape_node(state: GraphState, *, settings: Settings) -> GraphState:
     )
 
     try:
-        # Create service and scrape
-        service = IdealistaService(settings.apify_token)
-        try:
-            property_data = await service.scrape_property(url)
-        finally:
-            await service.close()
+        property_data = await idealista_service.scrape_property(url)
 
-        # Emit success event
         num_images = len(property_data.image_urls)
         events.append(
             StreamEvent(
@@ -100,7 +93,9 @@ async def scrape_node(state: GraphState, *, settings: Settings) -> GraphState:
         }
 
 
-async def classify_node(state: GraphState, *, settings: Settings) -> GraphState:
+async def classify_node(
+    state: GraphState, *, classifier_service: ImageClassifierService
+) -> GraphState:
     """
     Node 2: Classify each image to identify room types.
 
@@ -123,20 +118,11 @@ async def classify_node(state: GraphState, *, settings: Settings) -> GraphState:
     )
 
     try:
-        classifier = ImageClassifierService(
-            settings.openai_api_key,
-            model=settings.openai_classification_model,
-        )
-
-        classifications = []
-
         # Progress callback to emit events for each image
         async def progress_callback(
             current: int, total: int, classification: ImageClassification
         ) -> None:
-            room_label = classifier.get_room_label(
-                classification.room_type, classification.room_number
-            )
+            room_label = get_room_label(classification.room_type, classification.room_number)
             events.append(
                 StreamEvent(
                     type="progress",
@@ -152,7 +138,7 @@ async def classify_node(state: GraphState, *, settings: Settings) -> GraphState:
                 )
             )
 
-        classifications = await classifier.classify_images(image_urls, progress_callback)
+        classifications = await classifier_service.classify_images(image_urls, progress_callback)
 
         # Summary of classifications
         room_counts: dict[str, int] = {}
@@ -199,15 +185,15 @@ async def classify_node(state: GraphState, *, settings: Settings) -> GraphState:
         }
 
 
-async def group_node(state: GraphState, *, settings: Settings) -> GraphState:
+async def group_node(
+    state: GraphState, *, classifier_service: ImageClassifierService
+) -> GraphState:
     """
     Node 3: Group images by room.
 
     This step is crucial to avoid counting the same room multiple times.
     Multiple photos of the kitchen should be analyzed together as ONE kitchen.
     """
-    _ = settings  # Not used in this node but kept for consistency
-
     if state.get("error"):
         return state
 
@@ -223,21 +209,15 @@ async def group_node(state: GraphState, *, settings: Settings) -> GraphState:
         )
     )
 
-    # Group images by room
-    classifier = ImageClassifierService(
-        openai_api_key="",  # Not needed for grouping
-    )
-    grouped = classifier.group_by_room(classifications)
+    grouped = classifier_service.group_by_room(classifications)
 
     # Filter out exterior and other non-room images for estimation
-    # But keep track of them for reference
     room_groups = {}
     skipped_types = [RoomType.EXTERIOR.value, RoomType.OTHER.value]
 
     for room_key, room_classifications in grouped.items():
         room_type = room_classifications[0].room_type.value
         if room_type not in skipped_types:
-            # Convert to dict for JSON serialization in state
             room_groups[room_key] = [
                 {
                     "image_url": c.image_url,
@@ -254,8 +234,7 @@ async def group_node(state: GraphState, *, settings: Settings) -> GraphState:
             message=f"Agrupadas {sum(len(v) for v in room_groups.values())} fotos em {len(room_groups)} divisões",
             step=3,
             total_steps=5,
-            data={"num_rooms": len(room_groups),
-                  "rooms": list(room_groups.keys())},
+            data={"num_rooms": len(room_groups), "rooms": list(room_groups.keys())},
         )
     )
 
@@ -267,7 +246,9 @@ async def group_node(state: GraphState, *, settings: Settings) -> GraphState:
     }
 
 
-async def estimate_node(state: GraphState, *, settings: Settings) -> GraphState:
+async def estimate_node(
+    state: GraphState, *, estimator_service: RenovationEstimatorService
+) -> GraphState:
     """
     Node 4: Estimate renovation costs for each room.
 
@@ -290,16 +271,9 @@ async def estimate_node(state: GraphState, *, settings: Settings) -> GraphState:
     )
 
     try:
-        estimator = RenovationEstimatorService(
-            settings.openai_api_key,
-            model=settings.openai_vision_model,
-        )
-
         room_analyses = []
 
-        # Analyze each room
         for _, room_data in grouped_images.items():
-            # Reconstruct classification objects
             classifications = [
                 ImageClassification(
                     image_url=d["image_url"],
@@ -314,9 +288,7 @@ async def estimate_node(state: GraphState, *, settings: Settings) -> GraphState:
             room_number = classifications[0].room_number
             image_urls = [c.image_url for c in classifications]
 
-            # Get room label for progress message
-            room_label = estimator._classifier.get_room_label(
-                room_type, room_number)
+            room_label = get_room_label(room_type, room_number)
 
             events.append(
                 StreamEvent(
@@ -327,8 +299,7 @@ async def estimate_node(state: GraphState, *, settings: Settings) -> GraphState:
                 )
             )
 
-            # Analyze the room
-            analysis = await estimator.analyze_room(room_type, room_number, image_urls)
+            analysis = await estimator_service.analyze_room(room_type, room_number, image_urls)
             room_analyses.append(analysis)
 
             events.append(
@@ -383,7 +354,9 @@ async def estimate_node(state: GraphState, *, settings: Settings) -> GraphState:
         }
 
 
-async def summarize_node(state: GraphState, *, settings: Settings) -> GraphState:
+async def summarize_node(
+    state: GraphState, *, estimator_service: RenovationEstimatorService
+) -> GraphState:
     """
     Node 5: Generate final summary and create the complete estimate.
 
@@ -406,22 +379,14 @@ async def summarize_node(state: GraphState, *, settings: Settings) -> GraphState
     )
 
     try:
-        estimator = RenovationEstimatorService(
-            settings.openai_api_key,
-            model=settings.openai_vision_model,
-        )
-
-        # Calculate totals
         total_min = sum(r.cost_min for r in room_analyses)
         total_max = sum(r.cost_max for r in room_analyses)
 
-        # Generate summary
-        summary = await estimator.generate_summary(
+        summary = await estimator_service.generate_summary(
             property_data, room_analyses, total_min, total_max
         )
 
-        # Create final estimate
-        estimate = estimator.create_estimate(
+        estimate = estimator_service.create_estimate(
             state["url"],
             property_data,
             room_analyses,
@@ -464,7 +429,12 @@ async def summarize_node(state: GraphState, *, settings: Settings) -> GraphState
         }
 
 
-def build_renovation_graph(settings: Settings) -> StateGraph:
+def build_renovation_graph(
+    settings: Settings,
+    idealista_service: IdealistaService,
+    classifier_service: ImageClassifierService,
+    estimator_service: RenovationEstimatorService,
+) -> StateGraph:
     """
     Build the complete LangGraph for renovation estimation.
 
@@ -472,41 +442,41 @@ def build_renovation_graph(settings: Settings) -> StateGraph:
     scrape -> classify -> group -> estimate -> summarize -> END
 
     Args:
-        settings: Application settings with API keys
+        settings: Application settings (retained for future use)
+        idealista_service: Pre-built Idealista scraping service
+        classifier_service: Pre-built image classification service
+        estimator_service: Pre-built renovation estimation service
 
     Returns:
         Compiled StateGraph ready for execution
     """
-    # Create the graph with dict state
     graph = StateGraph(dict)
 
-    # Add nodes - each node receives state and settings.
     # IMPORTANT: We wrap each async node in an async function instead of a lambda
     # so LangGraph correctly detects and awaits the coroutine rather than
     # treating the node as a sync function that returns an un-awaited coroutine.
 
-    async def scrape_with_settings(state: GraphState) -> GraphState:
-        return await scrape_node(state, settings=settings)
+    async def scrape_with_services(state: GraphState) -> GraphState:
+        return await scrape_node(state, idealista_service=idealista_service)
 
-    async def classify_with_settings(state: GraphState) -> GraphState:
-        return await classify_node(state, settings=settings)
+    async def classify_with_services(state: GraphState) -> GraphState:
+        return await classify_node(state, classifier_service=classifier_service)
 
-    async def group_with_settings(state: GraphState) -> GraphState:
-        return await group_node(state, settings=settings)
+    async def group_with_services(state: GraphState) -> GraphState:
+        return await group_node(state, classifier_service=classifier_service)
 
-    async def estimate_with_settings(state: GraphState) -> GraphState:
-        return await estimate_node(state, settings=settings)
+    async def estimate_with_services(state: GraphState) -> GraphState:
+        return await estimate_node(state, estimator_service=estimator_service)
 
-    async def summarize_with_settings(state: GraphState) -> GraphState:
-        return await summarize_node(state, settings=settings)
+    async def summarize_with_services(state: GraphState) -> GraphState:
+        return await summarize_node(state, estimator_service=estimator_service)
 
-    graph.add_node("scrape", scrape_with_settings)
-    graph.add_node("classify", classify_with_settings)
-    graph.add_node("group", group_with_settings)
-    graph.add_node("estimate", estimate_with_settings)
-    graph.add_node("summarize", summarize_with_settings)
+    graph.add_node("scrape", scrape_with_services)
+    graph.add_node("classify", classify_with_services)
+    graph.add_node("group", group_with_services)
+    graph.add_node("estimate", estimate_with_services)
+    graph.add_node("summarize", summarize_with_services)
 
-    # Define the flow (linear for MVP)
     graph.set_entry_point("scrape")
     graph.add_edge("scrape", "classify")
     graph.add_edge("classify", "group")
@@ -515,26 +485,3 @@ def build_renovation_graph(settings: Settings) -> StateGraph:
     graph.add_edge("summarize", END)
 
     return graph.compile()
-
-
-# Convenience function to run the graph
-async def analyze_property(url: str, settings: Settings, user_id: str = "") -> GraphState:
-    """
-    Run the complete renovation analysis for a property.
-
-    Args:
-        url: Idealista listing URL
-        settings: Application settings
-        user_id: Optional user ID
-
-    Returns:
-        Final state with all results
-    """
-    from app.graphs.state import create_initial_state
-
-    graph = build_renovation_graph(settings)
-    initial_state = create_initial_state(url, user_id)
-
-    # Run the graph
-    final_state = await graph.ainvoke(initial_state)
-    return final_state

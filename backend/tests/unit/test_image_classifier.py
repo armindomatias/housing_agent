@@ -1,13 +1,13 @@
 """
 Tests for the ImageClassifier service — pure logic only (no OpenAI calls).
 
-Tests _map_room_type(), group_by_room(), and get_room_label() methods.
+Tests _map_room_type(), group_by_room(), and the standalone get_room_label() function.
 """
 
 import pytest
 
 from app.models.property import ImageClassification, RoomType
-from app.services.image_classifier import ImageClassifierService
+from app.services.image_classifier import ImageClassifierService, get_room_label
 
 
 @pytest.fixture
@@ -120,20 +120,26 @@ class TestGroupByRoom:
 
 
 class TestGetRoomLabel:
-    """Tests for ImageClassifierService.get_room_label()."""
+    """Tests for the standalone get_room_label() function."""
 
-    def test_kitchen_label(self, classifier: ImageClassifierService):
-        assert classifier.get_room_label(RoomType.KITCHEN, 1) == "Cozinha"
+    def test_kitchen_label(self):
+        assert get_room_label(RoomType.KITCHEN, 1) == "Cozinha"
 
-    def test_bedroom_with_number(self, classifier: ImageClassifierService):
-        assert classifier.get_room_label(RoomType.BEDROOM, 1) == "Quarto 1"
-        assert classifier.get_room_label(RoomType.BEDROOM, 2) == "Quarto 2"
+    def test_bedroom_with_number(self):
+        assert get_room_label(RoomType.BEDROOM, 1) == "Quarto 1"
+        assert get_room_label(RoomType.BEDROOM, 2) == "Quarto 2"
 
-    def test_bathroom_with_number(self, classifier: ImageClassifierService):
-        assert classifier.get_room_label(RoomType.BATHROOM, 1) == "Casa de Banho 1"
+    def test_bathroom_with_number(self):
+        assert get_room_label(RoomType.BATHROOM, 1) == "Casa de Banho 1"
 
-    def test_living_room_no_number(self, classifier: ImageClassifierService):
-        assert classifier.get_room_label(RoomType.LIVING_ROOM, 1) == "Sala"
+    def test_living_room_no_number(self):
+        assert get_room_label(RoomType.LIVING_ROOM, 1) == "Sala"
 
-    def test_hallway_no_number(self, classifier: ImageClassifierService):
-        assert classifier.get_room_label(RoomType.HALLWAY, 1) == "Corredor"
+    def test_hallway_no_number(self):
+        assert get_room_label(RoomType.HALLWAY, 1) == "Corredor"
+
+    def test_all_room_types_return_string(self):
+        for room_type in RoomType:
+            label = get_room_label(room_type, 1)
+            assert isinstance(label, str)
+            assert len(label) > 0

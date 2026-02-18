@@ -18,6 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.analyze import router as analyze_router
 from app.config import get_settings
+from app.graphs.main_graph import build_renovation_graph
+from app.services.idealista import IdealistaService
+from app.services.image_classifier import ImageClassifierService
+from app.services.renovation_estimator import RenovationEstimatorService
 
 # Configure logging
 logging.basicConfig(
@@ -48,9 +52,33 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         logger.info("Apify token configured")
 
+    # Create services once at startup
+    idealista_service = IdealistaService(settings.apify_token)
+    classifier_service = ImageClassifierService(
+        settings.openai_api_key,
+        model=settings.openai_classification_model,
+    )
+    estimator_service = RenovationEstimatorService(
+        settings.openai_api_key,
+        model=settings.openai_vision_model,
+    )
+
+    # Compile graph once and store on app state
+    graph = build_renovation_graph(
+        settings, idealista_service, classifier_service, estimator_service
+    )
+
+    _app.state.idealista_service = idealista_service
+    _app.state.classifier_service = classifier_service
+    _app.state.estimator_service = estimator_service
+    _app.state.graph = graph
+
+    logger.info("Services initialized and graph compiled")
+
     yield
 
-    # Shutdown
+    # Shutdown - close HTTP clients
+    await idealista_service.close()
     logger.info("Rehabify API shutting down...")
 
 

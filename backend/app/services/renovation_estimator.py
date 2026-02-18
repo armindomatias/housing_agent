@@ -28,7 +28,7 @@ from app.models.property import (
     RoomType,
 )
 from app.prompts.renovation import ROOM_ANALYSIS_PROMPT, SUMMARY_PROMPT
-from app.services.image_classifier import ImageClassifierService
+from app.services.image_classifier import get_room_label
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,6 @@ class RenovationEstimatorService:
         """
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
-        self._classifier = ImageClassifierService(openai_api_key)
 
     async def analyze_room(
         self,
@@ -72,7 +71,7 @@ class RenovationEstimatorService:
         Returns:
             RoomAnalysis with condition assessment and cost estimates
         """
-        room_label = self._classifier.get_room_label(room_type, room_number)
+        room_label = get_room_label(room_type, room_number)
 
         # Build the prompt with room context
         prompt = ROOM_ANALYSIS_PROMPT.format(

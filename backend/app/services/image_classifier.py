@@ -14,6 +14,9 @@ Usage:
     classifier = ImageClassifierService(openai_api_key="...")
     classifications = await classifier.classify_images(image_urls)
     grouped = classifier.group_by_room(classifications)
+
+    # Standalone label helper (no service instance needed):
+    label = get_room_label(RoomType.BEDROOM, 2)  # -> "Quarto 2"
 """
 
 import asyncio
@@ -27,6 +30,39 @@ from app.models.property import ImageClassification, RoomType
 from app.prompts.renovation import IMAGE_CLASSIFICATION_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+def get_room_label(room_type: RoomType, room_number: int) -> str:
+    """
+    Get a human-readable label for a room.
+
+    Args:
+        room_type: Type of room
+        room_number: Room number
+
+    Returns:
+        Human-readable label in Portuguese, e.g., "Cozinha", "Quarto 1"
+    """
+    labels = {
+        RoomType.KITCHEN: "Cozinha",
+        RoomType.LIVING_ROOM: "Sala",
+        RoomType.BEDROOM: "Quarto",
+        RoomType.BATHROOM: "Casa de Banho",
+        RoomType.HALLWAY: "Corredor",
+        RoomType.BALCONY: "Varanda",
+        RoomType.EXTERIOR: "Exterior",
+        RoomType.GARAGE: "Garagem",
+        RoomType.STORAGE: "Arrecadação",
+        RoomType.OTHER: "Outro",
+    }
+
+    base_label = labels.get(room_type, "Outro")
+
+    # Add number for rooms that can have multiples
+    if room_type in [RoomType.BEDROOM, RoomType.BATHROOM] and room_number > 0:
+        return f"{base_label} {room_number}"
+
+    return base_label
 
 
 class ImageClassifierService:
@@ -208,38 +244,6 @@ class ImageClassifierService:
             grouped[room_key].append(classification)
 
         return dict(grouped)
-
-    def get_room_label(self, room_type: RoomType, room_number: int) -> str:
-        """
-        Get a human-readable label for a room.
-
-        Args:
-            room_type: Type of room
-            room_number: Room number
-
-        Returns:
-            Human-readable label in Portuguese, e.g., "Cozinha", "Quarto 1"
-        """
-        labels = {
-            RoomType.KITCHEN: "Cozinha",
-            RoomType.LIVING_ROOM: "Sala",
-            RoomType.BEDROOM: "Quarto",
-            RoomType.BATHROOM: "Casa de Banho",
-            RoomType.HALLWAY: "Corredor",
-            RoomType.BALCONY: "Varanda",
-            RoomType.EXTERIOR: "Exterior",
-            RoomType.GARAGE: "Garagem",
-            RoomType.STORAGE: "Arrecadação",
-            RoomType.OTHER: "Outro",
-        }
-
-        base_label = labels.get(room_type, "Outro")
-
-        # Add number for rooms that can have multiples
-        if room_type in [RoomType.BEDROOM, RoomType.BATHROOM] and room_number > 0:
-            return f"{base_label} {room_number}"
-
-        return base_label
 
 
 # Factory function for dependency injection

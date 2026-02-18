@@ -12,14 +12,12 @@ Endpoints:
 import inspect
 import json
 import logging
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl
 from sse_starlette.sse import EventSourceResponse
 
-from app.config import Settings, get_settings
-from app.graphs.main_graph import build_renovation_graph
 from app.graphs.state import create_initial_state
 from app.models.property import RenovationEstimate
 
@@ -32,8 +30,7 @@ class AnalyzeRequest(BaseModel):
     """Request body for property analysis."""
 
     url: HttpUrl = Field(description="Idealista listing URL")
-    user_id: str = Field(
-        default="", description="Optional user ID for tracking")
+    user_id: str = Field(default="", description="Optional user ID for tracking")
 
 
 class AnalyzeResponse(BaseModel):
@@ -43,41 +40,35 @@ class AnalyzeResponse(BaseModel):
     estimate: RenovationEstimate | None = None
     error: str | None = None
 
-# Called by the analyze_property_stream async function exposed through FastAPI POST request
-
 
 async def stream_analysis(
-    url: str, user_id: str, settings: Settings
+    url: str, user_id: str, graph: Any
 ) -> AsyncGenerator[str, None]:
     """
     Generator that streams analysis events as SSE.
 
-    Runs the LangGraph and yields each stream event as it occurs.
+    Runs the pre-compiled LangGraph and yields each stream event as it occurs.
 
     Args:
         url: Idealista URL to analyze
         user_id: Optional user ID
-        settings: Application settings
+        graph: Pre-compiled LangGraph instance from app.state
 
     Yields:
         SSE-formatted event strings
     """
-    graph = build_renovation_graph(settings)
     initial_state = create_initial_state(url, user_id)
 
     # Track which events we've already sent
     sent_events = 0
 
     try:
-        # Run the graph - we'll check for new events after each node
         async for state in graph.astream(initial_state):
             # Some LangGraph configurations may yield a coroutine instead of a plain dict.
             # If that happens, await it here so we always work with the resolved state.
             if inspect.iscoroutine(state):
                 state = await state
 
-            # Get new events from state
-            # Note: astream yields state after each node, so we can check for new events
             if isinstance(state, dict):
                 # Handle different state formats from LangGraph
                 actual_state = state
@@ -86,17 +77,14 @@ async def stream_analysis(
                     actual_state = list(state.values())[0]
 
                 events = actual_state.get("stream_events", [])
-                # use the counter of sent_events to just retrieve the last one
                 new_events = events[sent_events:]
 
                 for event in new_events:
-                    # Convert event to dict if it's a Pydantic model
                     if hasattr(event, "model_dump"):
                         event_data = event.model_dump()
                     else:
                         event_data = event
 
-                    # after event processed, yield the event/state as a json
                     yield json.dumps(event_data, ensure_ascii=False)
                     sent_events += 1
 
@@ -113,8 +101,8 @@ async def stream_analysis(
 
 @router.post("", response_class=EventSourceResponse)
 async def analyze_property_stream(
-    request: AnalyzeRequest,
-    settings: Settings = Depends(get_settings),
+    body: AnalyzeRequest,
+    request: Request,
 ) -> EventSourceResponse:
     """
     Analyze a property with streaming progress updates.
@@ -135,18 +123,17 @@ async def analyze_property_stream(
       -d '{"url": "https://www.idealista.pt/imovel/12345678/"}'
     ```
     """
-
-    # the EventSourceResponse works for Streaming events to the client over HTTP while data is generated
+    graph = request.app.state.graph
     return EventSourceResponse(
-        stream_analysis(str(request.url), request.user_id, settings),
+        stream_analysis(str(body.url), body.user_id, graph),
         media_type="text/event-stream",
     )
 
 
 @router.post("/sync", response_model=AnalyzeResponse)
 async def analyze_property_sync(
-    request: AnalyzeRequest,
-    settings: Settings = Depends(get_settings),
+    body: AnalyzeRequest,
+    request: Request,
 ) -> AnalyzeResponse:
     """
     Analyze a property without streaming (simpler but no progress updates).
@@ -157,20 +144,17 @@ async def analyze_property_sync(
     Returns the complete RenovationEstimate or an error message.
     """
     try:
-        graph = build_renovation_graph(settings)
-        initial_state = create_initial_state(str(request.url), request.user_id)
+        graph = request.app.state.graph
+        initial_state = create_initial_state(str(body.url), body.user_id)
 
-        # Run the complete graph
         final_state = await graph.ainvoke(initial_state)
 
-        # Check for errors
         if final_state.get("error"):
             return AnalyzeResponse(
                 success=False,
                 error=final_state["error"],
             )
 
-        # Get the estimate
         estimate = final_state.get("estimate")
         if estimate is None:
             return AnalyzeResponse(
