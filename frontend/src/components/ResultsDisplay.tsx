@@ -43,6 +43,21 @@ function RoomCard({ room }: { room: RoomAnalysis }) {
         </span>
       </div>
 
+      {/* Room images */}
+      {room.images && room.images.length > 0 && (
+        <div className="flex overflow-x-auto gap-2 mb-3 pb-1">
+          {room.images.map((url, idx) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={idx}
+              src={url}
+              alt={`${room.room_label} ${idx + 1}`}
+              className="h-28 w-auto flex-shrink-0 rounded object-cover"
+            />
+          ))}
+        </div>
+      )}
+
       <p className="text-gray-600 dark:text-gray-400 text-sm mb-3">
         {room.condition_notes}
       </p>
@@ -97,6 +112,19 @@ function RoomCard({ room }: { room: RoomAnalysis }) {
 export function ResultsDisplay({ estimate, onReset }: ResultsDisplayProps) {
   const confidencePercent = Math.round(estimate.overall_confidence * 100);
 
+  // Compute hero images: prefer images not used in any room analysis
+  const heroImages = (() => {
+    if (!estimate.property_data?.image_urls?.length) return [];
+    const usedUrls = new Set(
+      estimate.room_analyses.flatMap((r) => r.images ?? [])
+    );
+    const general = estimate.property_data.image_urls.filter(
+      (url) => !usedUrls.has(url)
+    );
+    const candidates = general.length >= 2 ? general : estimate.property_data.image_urls;
+    return candidates.slice(0, 2);
+  })();
+
   return (
     <div className="w-full max-w-4xl space-y-6">
       {/* Header with totals */}
@@ -136,6 +164,21 @@ export function ResultsDisplay({ estimate, onReset }: ResultsDisplayProps) {
           </div>
         )}
       </div>
+
+      {/* Hero images */}
+      {heroImages.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {heroImages.map((url, idx) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={idx}
+              src={url}
+              alt={`Imóvel foto ${idx + 1}`}
+              className="w-full h-48 object-cover rounded-lg"
+            />
+          ))}
+        </div>
+      )}
 
       {/* Summary */}
       {estimate.summary && (
