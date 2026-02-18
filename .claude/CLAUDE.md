@@ -8,12 +8,14 @@
 
 ## What Is This
 
-Conversational web application to help first-time home buyers in Portugal:
+I'm building a conversational web application (chat-first) that helps first-time home buyers in Portugal to:
 
-- Analyze properties from Idealista
-- Estimate renovation costs via AI photo analysis
-- Calculate taxes and fiscal incentives, based on their fiscal persona and objectives
-- Compare investments
+1. Analyze properties from Idealista (scraping + AI photo analysis)
+2. Estimate renovation costs per room via AI photo analysis
+3. Calculate tax costs (IMT, Stamp Duty) and identify applicable incentives, based on their fiscal persona and objectives
+4. Compare different properties (investments)
+
+The application uses a conversational approach where the user interacts via chat and the system automatically executes actions based on intent.
 
 ## Git Workflow
 
@@ -115,13 +117,35 @@ housing_agent/
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Python 3.12+, FastAPI, Pydantic v2, LangGraph |
-| AI | OpenAI GPT-4o (estimation), GPT-4o-mini (classification) |
-| Scraping | Apify (Idealista actor) |
-| Frontend | Next.js 16, React 19, TypeScript 5, Tailwind CSS 4 |
-| Streaming | Server-Sent Events (SSE) via sse-starlette |
+#### Backend (Python)
+
+- **FastAPI** - API framework
+- **LangGraph** - Agent orchestration with state graph
+- **OpenAI** - OpenAI GPT-4o (estimation), GPT-4o-mini (classification)
+- **Supabase** - PostgreSQL + Auth
+- **httpx** - Async HTTP client
+- **sse-starlette** - Server-Sent Events for streaming
+- **Pydantic v2** - Validation and schemas
+
+#### Frontend (TypeScript)
+
+- **Next.js 16** (App Router)
+- **Tailwind CSS**
+- **shadcn/ui** - Components
+- **Supabase Auth** - Authentication
+
+### External Services
+
+- **Apify** - Idealista scraping (I already have an actor configured)
+- **Stripe** - Payments (subscription)
+
+| Layer     | Technology                                               |
+| --------- | -------------------------------------------------------- |
+| Backend   | Python 3.12+, FastAPI, Pydantic v2, LangGraph            |
+| AI        | OpenAI GPT-4o (estimation), GPT-4o-mini (classification) |
+| Scraping  | Apify (Idealista actor)                                  |
+| Frontend  | Next.js 16, React 19, TypeScript 5, Tailwind CSS 4       |
+| Streaming | Server-Sent Events (SSE) via sse-starlette               |
 
 ### Data Flow (LangGraph Pipeline)
 
@@ -151,7 +175,7 @@ cd frontend && npm run lint
 
 ## Feature Development Workflow
 
-Every feature follows this 7-step sequence:
+Every feature follows this 7-step sequence (FIRST USE commands/plan-mode.md to ideate the plan):
 
 ### 1. Understand
 
@@ -170,6 +194,7 @@ git checkout main && git checkout -b feat/<feature-name>
 ### 4. Build
 
 Follow these isolation principles:
+
 - One service per file in `backend/app/services/`
 - One router per endpoint group in `backend/app/api/v1/`
 - One component per file in `frontend/src/components/`
@@ -178,6 +203,7 @@ Follow these isolation principles:
 ### 5. Test
 
 Write tests alongside code, not after:
+
 - Unit tests for every service, model, and utility
 - Integration tests for API endpoints
 - See **Testing Standards** below
@@ -185,6 +211,7 @@ Write tests alongside code, not after:
 ### 6. Document
 
 Create/update the feature doc in `docs/features/<feature-name>/README.md` with:
+
 - Goal, Scope checklist, Decisions log, Files Changed
 
 ### 7. Review
@@ -195,11 +222,11 @@ Use `/feature-done` to run full test suite and generate review summary.
 
 ### Test Types
 
-| Type | When | Mocking |
-|------|------|---------|
-| Unit | Every service, model, utility | No external calls. Mock OpenAI, Apify, DB. |
-| Integration | API endpoints, graph flows | Mock external services. Use FastAPI TestClient. |
-| Regression | Bug fixes | Reproduce the bug as a failing test first, then fix. |
+| Type        | When                          | Mocking                                              |
+| ----------- | ----------------------------- | ---------------------------------------------------- |
+| Unit        | Every service, model, utility | No external calls. Mock OpenAI, Apify, DB.           |
+| Integration | API endpoints, graph flows    | Mock external services. Use FastAPI TestClient.      |
+| Regression  | Bug fixes                     | Reproduce the bug as a failing test first, then fix. |
 
 ### Directory Layout
 
