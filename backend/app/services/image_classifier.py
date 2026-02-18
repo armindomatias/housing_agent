@@ -376,7 +376,6 @@ class ImageClassifierService:
             grouped[room_key].append(classification)
 
         return dict(grouped)
-<<<<<<< HEAD
 
     async def cluster_room_images(
         self,
@@ -714,5 +713,3 @@ def create_image_classifier(
 ) -> ImageClassifierService:
     """Create an ImageClassifierService instance."""
     return ImageClassifierService(openai_api_key, model)
-=======
->>>>>>> docs/architecture-refactor

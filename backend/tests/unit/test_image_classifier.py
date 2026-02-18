@@ -1,15 +1,10 @@
 """
 Tests for the ImageClassifier service — pure logic only (no OpenAI calls).
 
-<<<<<<< HEAD
 Covers _map_room_type(), group_by_room_simple(), group_by_room() (async),
 cluster_room_images(), _validate_clusters(), _metadata_fallback(),
 the standalone get_room_label() function, classify_from_tag(), and
 classify_images() tag/GPT routing.
-=======
-Covers _map_room_type(), group_by_room(), the standalone get_room_label()
-function, classify_from_tag(), and classify_images() tag/GPT routing.
->>>>>>> docs/architecture-refactor
 """
 
 from unittest.mock import AsyncMock, patch
