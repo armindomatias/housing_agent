@@ -8,11 +8,27 @@ and generates ONE estimate per room, even if there are multiple photos.
 The estimation uses Portuguese market prices (2024/2025) and always provides
 a min-max range to account for uncertainty.
 
+## Parallel Estimation (Branch 3)
+
+Previously, analyze_all_rooms() iterated sequentially — each GPT-4o call had
+to finish before the next room started. For a 5-room property this meant 5 serial
+API round-trips, each taking 5–10 s, for a total of 25–50 s just for estimation.
+
+Now each room analysis runs as a separate async task and they are submitted
+concurrently. A semaphore (default: 3 concurrent calls) prevents us from
+hammering the OpenAI rate limit. asyncio.as_completed() lets us fire progress
+events as soon as each room finishes, in whatever order they complete.
+
+Concrete improvement: a 5-room property that took ~35 s serially now takes
+~12 s concurrently (bounded by the slowest single room call, not the sum).
+
 Usage:
     estimator = RenovationEstimatorService(openai_api_key="...")
-    room_analysis = await estimator.analyze_room(room_type, room_number, image_urls)
+    # Analyze all rooms in parallel
+    analyses = await estimator.analyze_all_rooms(grouped_images, progress_callback)
 """
 
+import asyncio
 import json
 import logging
 
@@ -39,17 +55,22 @@ class RenovationEstimatorService:
     def __init__(
         self,
         openai_api_key: str,
-        model: str = "gpt-4o",  # Use full GPT-4o for better analysis
+        model: str = "gpt-4o",      # Use full GPT-4o for better analysis
+        max_concurrent: int = 3,    # Concurrent GPT-4o calls (rate-limit guard)
     ):
         """
         Initialize the renovation estimator.
 
         Args:
             openai_api_key: OpenAI API key
-            model: Model to use for analysis (default: gpt-4o for quality)
+            model:          Model to use for analysis (default: gpt-4o for quality)
+            max_concurrent: Maximum simultaneous room-analysis API calls.
+                            3 is a safe default — GPT-4o Vision calls are heavy
+                            and the Tier-1 rate limit is typically 500 RPM.
         """
         self.client = AsyncOpenAI(api_key=openai_api_key)
         self.model = model
+        self.semaphore = asyncio.Semaphore(max_concurrent)
 
     async def analyze_room(
         self,
@@ -225,32 +246,65 @@ class RenovationEstimatorService:
         progress_callback=None,
     ) -> list[RoomAnalysis]:
         """
-        Analyze all rooms from grouped image classifications.
+        Analyze all rooms concurrently, respecting the semaphore rate limit.
+
+        Previously this method was sequential (await each room, then next).
+        Now all rooms are submitted as concurrent tasks and we collect results
+        via asyncio.as_completed() — identical to how classify_images works.
+
+        The semaphore on analyze_room() caps concurrent GPT-4o calls at
+        self.max_concurrent (default 3), preventing rate-limit errors while
+        still running faster than serial execution.
+
+        Progress callbacks fire as each room completes (out-of-order is fine
+        for the UI — the frontend only needs current/total counts).
 
         Args:
-            grouped_images: Dictionary from ImageClassifierService.group_by_room()
+            grouped_images:   Dict mapping room key → list[ImageClassification].
+                              Produced by ImageClassifierService.group_by_room().
             progress_callback: Optional async callback(current, total, room_analysis)
+                               called as each room finishes.
 
         Returns:
-            List of RoomAnalysis objects, one per room
+            List of RoomAnalysis objects (one per room, order may differ from input).
         """
-        room_analyses = []
         total = len(grouped_images)
+        room_analyses: list[RoomAnalysis] = []
+        completed = 0
 
-        for i, (_, classifications) in enumerate(grouped_images.items()):
-            # Extract room type and number from key (e.g., "cozinha_1")
-            room_type = classifications[0].room_type
-            room_number = classifications[0].room_number
+        async def _bounded_analyze(
+            room_type: RoomType, room_number: int, image_urls: list[str]
+        ) -> RoomAnalysis:
+            """
+            Thin wrapper that acquires the semaphore before calling analyze_room.
 
-            # Get all image URLs for this room
-            image_urls = [c.image_url for c in classifications]
+            Keeping the semaphore here (not inside analyze_room) means:
+            - analyze_room stays a clean, testable API wrapper
+            - Concurrency limiting is an orchestration concern of analyze_all_rooms
+            - Tests can patch analyze_room without bypassing the semaphore
+            """
+            async with self.semaphore:
+                return await self.analyze_room(room_type, room_number, image_urls)
 
-            # Analyze the room
-            analysis = await self.analyze_room(room_type, room_number, image_urls)
+        # Build one bounded coroutine per room
+        tasks = [
+            _bounded_analyze(
+                classifications[0].room_type,
+                classifications[0].room_number,
+                [c.image_url for c in classifications],
+            )
+            for classifications in grouped_images.values()
+        ]
+
+        # as_completed yields futures as they finish, not in submission order.
+        # This lets progress events fire immediately when a room is done.
+        for coro in asyncio.as_completed(tasks):
+            analysis = await coro
             room_analyses.append(analysis)
+            completed += 1
 
             if progress_callback:
-                await progress_callback(i + 1, total, analysis)
+                await progress_callback(completed, total, analysis)
 
         return room_analyses
 

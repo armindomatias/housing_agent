@@ -281,10 +281,9 @@ async def estimate_node(
     )
 
     try:
-        room_analyses = []
-
-        for _, room_data in grouped_images.items():
-            classifications = [
+        # Rebuild ImageClassification objects from the JSON-serialised state
+        grouped_classifications: dict[str, list[ImageClassification]] = {
+            room_key: [
                 ImageClassification(
                     image_url=d["image_url"],
                     room_type=RoomType(d["room_type"]),
@@ -293,25 +292,14 @@ async def estimate_node(
                 )
                 for d in room_data
             ]
+            for room_key, room_data in grouped_images.items()
+        }
 
-            room_type = classifications[0].room_type
-            room_number = classifications[0].room_number
-            image_urls = [c.image_url for c in classifications]
-
-            room_label = get_room_label(room_type, room_number)
-
-            events.append(
-                StreamEvent(
-                    type="progress",
-                    message=f"A analisar {room_label}...",
-                    step=4,
-                    total_steps=5,
-                )
-            )
-
-            analysis = await estimator_service.analyze_room(room_type, room_number, image_urls)
-            room_analyses.append(analysis)
-
+        # Progress callback fires as each room completes (out-of-order is fine)
+        async def room_progress_callback(
+            current: int, total: int, analysis: Any
+        ) -> None:
+            room_label = get_room_label(analysis.room_type, analysis.room_number)
             events.append(
                 StreamEvent(
                     type="progress",
@@ -326,9 +314,16 @@ async def estimate_node(
                         "condition": analysis.condition.value,
                         "cost_min": analysis.cost_min,
                         "cost_max": analysis.cost_max,
+                        "current": current,
+                        "total": total,
                     },
                 )
             )
+
+        # Run all room analyses concurrently (semaphore caps at max_concurrent)
+        room_analyses = await estimator_service.analyze_all_rooms(
+            grouped_classifications, progress_callback=room_progress_callback
+        )
 
         events.append(
             StreamEvent(
