@@ -1,8 +1,8 @@
 """
 Tests for the ImageClassifier service — pure logic only (no OpenAI calls).
 
-Tests _map_room_type(), group_by_room(), the standalone get_room_label() function,
-and the Apify-tag optimisation (classify_from_tag / classify_images with tags).
+Covers _map_room_type(), group_by_room(), the standalone get_room_label()
+function, classify_from_tag(), and classify_images() tag/GPT routing.
 """
 
 from unittest.mock import AsyncMock, patch
