@@ -9,48 +9,45 @@ Run with:
     uvicorn app.main:app --reload
 """
 
-import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.analyze import router as analyze_router
 from app.config import get_settings
 from app.graphs.main_graph import build_renovation_graph
+from app.logging_config import setup_logging
+from app.middleware import RequestContextMiddleware
 from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService
 from app.services.renovation_estimator import RenovationEstimatorService
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# Get settings
+# Get settings before logging setup so we know the debug flag
 settings = get_settings()
+
+# Configure logging
+setup_logging(settings.debug)
+
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan event handler for startup and shutdown."""
-    # Startup
-    logger.info("Rehabify API starting up...")
-    logger.info(f"CORS origins: {settings.cors_origins}")
+    logger.info("api_startup", cors_origins=settings.cors_origins)
 
-    # Check for required API keys
     if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY not set - AI features will not work")
+        logger.warning("openai_key_missing", detail="AI features will not work")
     else:
-        logger.info("OpenAI API key configured")
+        logger.info("openai_configured")
 
     if not settings.apify_token:
-        logger.warning("APIFY_TOKEN not set - using mock data for Idealista scraping")
+        logger.warning("apify_token_missing", detail="Using mock data for Idealista scraping")
     else:
-        logger.info("Apify token configured")
+        logger.info("apify_configured")
 
     # Create services once at startup
     idealista_service = IdealistaService(settings.apify_token)
@@ -73,13 +70,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.estimator_service = estimator_service
     _app.state.graph = graph
 
-    logger.info("Services initialized and graph compiled")
+    logger.info("services_initialized")
 
     yield
 
-    # Shutdown - close HTTP clients
     await idealista_service.close()
-    logger.info("Rehabify API shutting down...")
+    logger.info("api_shutdown")
 
 
 # Create FastAPI app
@@ -96,7 +92,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS for frontend access
+# Request context middleware must come before CORS so every response gets
+# the X-Request-ID header (including preflight OPTIONS responses).
+app.add_middleware(RequestContextMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
