@@ -16,8 +16,10 @@ def setup_logging(debug: bool = False) -> None:
     Args:
         debug: If True, use ConsoleRenderer; otherwise use JSONRenderer.
     """
+
+    # Configuring what will show up in the logging 
     shared_processors: list = [
-        structlog.contextvars.merge_contextvars,
+        structlog.contextvars.merge_contextvars, # request_id, property_url (from middleware)
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
