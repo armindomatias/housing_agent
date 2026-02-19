@@ -5,6 +5,7 @@ Loads environment variables from .env file.
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +35,9 @@ class Settings(BaseSettings):
     langsmith_api_key: str = ""
     langsmith_project: str = "rehabify"
     langchain_tracing_v2: bool = False  # Explicit opt-in
+
+    # Image Pipeline
+    use_base64_images: bool = Field(default=True)  # Download images once and pass as base64
 
     # App Settings
     debug: bool = False
