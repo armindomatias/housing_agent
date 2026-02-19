@@ -411,6 +411,7 @@ class ImageClassifierService:
         room_type: RoomType,
         image_urls: list[str],
         image_detail: str = "low",
+        expected_rooms: int | None = None,
     ) -> list[RoomCluster]:
         """
         Use GPT-4o-mini vision to cluster photos of one room type into physical rooms.
@@ -423,6 +424,7 @@ class ImageClassifierService:
             room_type: The room type being clustered (e.g. BEDROOM).
             image_urls: URLs of all images of this room type.
             image_detail: GPT image detail level ("low" or "auto").
+            expected_rooms: Soft hint for GPT — how many rooms metadata says exist.
 
         Returns:
             List of RoomCluster objects. On any failure returns a single cluster
@@ -440,9 +442,21 @@ class ImageClassifierService:
 
         # Get base label ("Quarto", "Casa de Banho") — split on space, take first word pair
         room_label = get_room_label(room_type, 1)
+
+        if expected_rooms is not None:
+            metadata_hint = (
+                f"INFORMAÇÃO DO ANÚNCIO: Segundo os dados do anúncio, este imóvel tem "
+                f"{expected_rooms} {room_label}(s).\n"
+                f"Usa esta informação como referência, mas confia na tua análise visual "
+                f"se as fotografias sugerirem algo diferente.\n"
+            )
+        else:
+            metadata_hint = ""
+
         prompt_text = ROOM_CLUSTERING_PROMPT.format(
             num_images=len(image_urls),
             room_type_label=room_label,
+            metadata_hint=metadata_hint,
         )
 
         content: list[dict] = [{"type": "text", "text": prompt_text}]
@@ -736,7 +750,16 @@ class ImageClassifierService:
         for room_type, items in type_buckets.items():
             if room_type in MULTI_ROOM_TYPES and len(items) > 1:
                 expected = num_rooms if room_type == RoomType.BEDROOM else num_bathrooms
-                cluster_tasks.append((room_type, items, expected))
+                if expected is not None and expected == 1:
+                    # Single room — all images belong to it. Skip clustering.
+                    logger.info(
+                        "clustering_skipped_single_room",
+                        room_type=room_type.value,
+                        num_images=len(items),
+                    )
+                    non_multi_buckets[room_type] = items
+                else:
+                    cluster_tasks.append((room_type, items, expected))
             else:
                 non_multi_buckets[room_type] = items
 
@@ -749,11 +772,13 @@ class ImageClassifierService:
             urls = [c.image_url for c in items]
 
             if len(urls) <= MAX_CLUSTERING_IMAGES:
-                clusters = await self.cluster_room_images(room_type, urls, image_detail)
+                clusters = await self.cluster_room_images(
+                    room_type, urls, image_detail, expected_rooms
+                )
             else:
                 first_batch = urls[:MAX_CLUSTERING_IMAGES]
                 first_clusters = await self.cluster_room_images(
-                    room_type, first_batch, image_detail
+                    room_type, first_batch, image_detail, expected_rooms
                 )
 
                 overflow_urls = urls[MAX_CLUSTERING_IMAGES:]
@@ -768,7 +793,7 @@ class ImageClassifierService:
                 else:
                     # Run a second pass on the overflow to find additional rooms
                     second_clusters = await self.cluster_room_images(
-                        room_type, overflow_urls, image_detail
+                        room_type, overflow_urls, image_detail, expected_rooms
                     )
                     room_num_offset = len(first_clusters)
                     offset_second = [

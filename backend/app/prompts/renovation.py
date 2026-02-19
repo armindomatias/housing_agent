@@ -116,6 +116,7 @@ REGRA CRÍTICA - PREFERIR SEPARAR:
 - É MELHOR criar grupos a mais do que juntar fotografias de divisões diferentes
 - Só agrupa fotografias quando tens CERTEZA que mostram o mesmo espaço
 
+{metadata_hint}
 RESPONDE APENAS em JSON com este formato exato:
 {{
     "clusters": [

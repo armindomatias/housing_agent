@@ -567,6 +567,86 @@ class TestClusterRoomImages:
         assert cluster_1.image_indices == [0]
         assert set(cluster_2.image_indices) == {1, 2}
 
+    @pytest.mark.asyncio
+    async def test_expected_rooms_hint_in_prompt(self, classifier: ImageClassifierService):
+        """When expected_rooms is passed, the prompt must include the metadata hint."""
+        gpt_response_json = """{
+            "clusters": [
+                {"room_number": 1, "image_indices": [0, 1], "confidence": 0.9, "visual_cues": "Same room"}
+            ],
+            "total_rooms": 1,
+            "reasoning": "One room"
+        }"""
+
+        mock_response = AsyncMock()
+        mock_response.choices = [AsyncMock()]
+        mock_response.choices[0].message.content = gpt_response_json
+        mock_response.choices[0].message.refusal = None
+
+        captured_messages: list = []
+
+        async def capture_create(**kwargs):
+            captured_messages.extend(kwargs.get("messages", []))
+            return mock_response
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            side_effect=capture_create,
+        ):
+            await classifier.cluster_room_images(
+                RoomType.BEDROOM,
+                ["http://img/1.jpg", "http://img/2.jpg"],
+                expected_rooms=2,
+            )
+
+        # The first message content block should contain the hint text
+        first_msg = captured_messages[0]
+        text_block = next(
+            block for block in first_msg["content"] if block["type"] == "text"
+        )
+        assert "INFORMAÇÃO DO ANÚNCIO" in text_block["text"]
+        assert "2" in text_block["text"]
+
+    @pytest.mark.asyncio
+    async def test_no_hint_when_expected_rooms_is_none(self, classifier: ImageClassifierService):
+        """When expected_rooms is None, the prompt must NOT include the metadata hint."""
+        gpt_response_json = """{
+            "clusters": [
+                {"room_number": 1, "image_indices": [0, 1], "confidence": 0.9, "visual_cues": "Same room"}
+            ],
+            "total_rooms": 1,
+            "reasoning": "One room"
+        }"""
+
+        mock_response = AsyncMock()
+        mock_response.choices = [AsyncMock()]
+        mock_response.choices[0].message.content = gpt_response_json
+        mock_response.choices[0].message.refusal = None
+
+        captured_messages: list = []
+
+        async def capture_create(**kwargs):
+            captured_messages.extend(kwargs.get("messages", []))
+            return mock_response
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            side_effect=capture_create,
+        ):
+            await classifier.cluster_room_images(
+                RoomType.BEDROOM,
+                ["http://img/1.jpg", "http://img/2.jpg"],
+                expected_rooms=None,
+            )
+
+        first_msg = captured_messages[0]
+        text_block = next(
+            block for block in first_msg["content"] if block["type"] == "text"
+        )
+        assert "INFORMAÇÃO DO ANÚNCIO" not in text_block["text"]
+
 
 class TestClassifySingleImageEdgeCases:
     """Tests for null content and refusal handling in classify_single_image()."""
@@ -914,3 +994,65 @@ class TestGroupByRoomAsync:
 
         mock_cluster.assert_not_called()
         assert "quarto_1" in grouped
+
+    @pytest.mark.asyncio
+    async def test_single_expected_room_skips_clustering(self, classifier: ImageClassifierService):
+        """3 bedroom images + num_rooms=1 → no API call, all land in quarto_1."""
+        classifications = [
+            self._make_classification("b1.jpg", RoomType.BEDROOM),
+            self._make_classification("b2.jpg", RoomType.BEDROOM),
+            self._make_classification("b3.jpg", RoomType.BEDROOM),
+        ]
+
+        with patch.object(
+            classifier, "cluster_room_images", new_callable=AsyncMock
+        ) as mock_cluster:
+            grouped = await classifier.group_by_room(classifications, num_rooms=1)
+
+        mock_cluster.assert_not_called()
+        assert "quarto_1" in grouped
+        assert len(grouped["quarto_1"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_single_expected_bathroom_skips_clustering(
+        self, classifier: ImageClassifierService
+    ):
+        """2 bathroom images + num_bathrooms=1 → no API call, all land in casa_de_banho_1."""
+        classifications = [
+            self._make_classification("wc1.jpg", RoomType.BATHROOM),
+            self._make_classification("wc2.jpg", RoomType.BATHROOM),
+        ]
+
+        with patch.object(
+            classifier, "cluster_room_images", new_callable=AsyncMock
+        ) as mock_cluster:
+            grouped = await classifier.group_by_room(classifications, num_bathrooms=1)
+
+        mock_cluster.assert_not_called()
+        assert "casa_de_banho_1" in grouped
+        assert len(grouped["casa_de_banho_1"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_unknown_expected_rooms_still_clusters(
+        self, classifier: ImageClassifierService
+    ):
+        """3 bedroom images + num_rooms=None → clustering is still called."""
+        classifications = [
+            self._make_classification("b1.jpg", RoomType.BEDROOM),
+            self._make_classification("b2.jpg", RoomType.BEDROOM),
+            self._make_classification("b3.jpg", RoomType.BEDROOM),
+        ]
+
+        fake_clusters = [
+            RoomCluster(room_number=1, image_indices=[0, 1, 2], confidence=0.7, visual_cues=""),
+        ]
+
+        with patch.object(
+            classifier,
+            "cluster_room_images",
+            new_callable=AsyncMock,
+            return_value=fake_clusters,
+        ) as mock_cluster:
+            await classifier.group_by_room(classifications, num_rooms=None)
+
+        mock_cluster.assert_called_once()
