@@ -26,6 +26,7 @@ from app.config import Settings
 from app.models.property import ImageClassification, RoomType, StreamEvent
 from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService, get_room_label
+from app.services.image_downloader import ImageDownloaderService
 from app.services.renovation_estimator import RenovationEstimatorService
 
 logger = structlog.get_logger(__name__)
@@ -35,7 +36,13 @@ logger = structlog.get_logger(__name__)
 GraphState = dict[str, Any]
 
 
-async def scrape_node(state: GraphState, *, idealista_service: IdealistaService) -> GraphState:
+async def scrape_node(
+    state: GraphState,
+    *,
+    idealista_service: IdealistaService,
+    downloader: ImageDownloaderService | None = None,
+    use_base64_images: bool = False,
+) -> GraphState:
     """
     Node 1: Scrape property data from Idealista.
 
@@ -67,10 +74,32 @@ async def scrape_node(state: GraphState, *, idealista_service: IdealistaService)
             )
         )
 
+        # Resolve image URLs: download once to base64 when toggle is on
+        if use_base64_images and downloader is not None:
+            events.append(
+                StreamEvent(
+                    type="status",
+                    message="A descarregar fotografias...",
+                    step=1,
+                    total_steps=5,
+                )
+            )
+            image_data = await downloader.download_images(property_data.image_urls)
+            resolved_urls = [
+                image_data.get(url, url) for url in property_data.image_urls
+            ]
+            logger.info(
+                "images_resolved_to_base64",
+                total=len(property_data.image_urls),
+                converted=len(image_data),
+            )
+        else:
+            resolved_urls = property_data.image_urls
+
         return {
             **state,
             "property_data": property_data,
-            "image_urls": property_data.image_urls,
+            "image_urls": resolved_urls,
             "stream_events": events,
             "current_step": "scraped",
         }
@@ -448,6 +477,7 @@ def build_renovation_graph(
     idealista_service: IdealistaService,
     classifier_service: ImageClassifierService,
     estimator_service: RenovationEstimatorService,
+    downloader: ImageDownloaderService | None = None,
 ) -> StateGraph:
     """
     Build the complete LangGraph for renovation estimation.
@@ -471,7 +501,12 @@ def build_renovation_graph(
     # treating the node as a sync function that returns an un-awaited coroutine.
 
     async def scrape_with_services(state: GraphState) -> GraphState:
-        return await scrape_node(state, idealista_service=idealista_service)
+        return await scrape_node(
+            state,
+            idealista_service=idealista_service,
+            downloader=downloader,
+            use_base64_images=settings.use_base64_images,
+        )
 
     async def classify_with_services(state: GraphState) -> GraphState:
         return await classify_node(state, classifier_service=classifier_service)

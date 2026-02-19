@@ -24,6 +24,7 @@ from app.logging_config import setup_logging
 from app.middleware import RequestContextMiddleware
 from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService
+from app.services.image_downloader import ImageDownloaderService
 from app.services.renovation_estimator import RenovationEstimatorService
 
 # Get settings before logging setup so we know the debug flag
@@ -68,10 +69,16 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         settings.openai_api_key,
         model=settings.openai_vision_model,
     )
+    downloader = ImageDownloaderService() if settings.use_base64_images else None
+
+    if settings.use_base64_images:
+        logger.info("base64_image_pipeline_enabled")
+    else:
+        logger.info("base64_image_pipeline_disabled", detail="passing URLs directly to OpenAI")
 
     # Compile graph once and store on app state
     graph = build_renovation_graph(
-        settings, idealista_service, classifier_service, estimator_service
+        settings, idealista_service, classifier_service, estimator_service, downloader
     )
 
     _app.state.idealista_service = idealista_service
