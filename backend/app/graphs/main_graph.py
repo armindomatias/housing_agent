@@ -17,9 +17,9 @@ Usage:
         pass
 """
 
-import logging
 from typing import Any
 
+import structlog
 from langgraph.graph import END, StateGraph
 
 from app.config import Settings
@@ -28,7 +28,7 @@ from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService, get_room_label
 from app.services.renovation_estimator import RenovationEstimatorService
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # Type alias for state (using dict for LangGraph compatibility)
@@ -76,7 +76,7 @@ async def scrape_node(state: GraphState, *, idealista_service: IdealistaService)
         }
 
     except Exception as e:
-        logger.error(f"Scraping failed: {e}")
+        logger.error("scrape_node_failed", error=str(e))
         events.append(
             StreamEvent(
                 type="error",
@@ -178,7 +178,7 @@ async def classify_node(
         }
 
     except Exception as e:
-        logger.error(f"Classification failed: {e}")
+        logger.error("classify_node_failed", error=str(e))
         events.append(
             StreamEvent(
                 type="error",
@@ -351,7 +351,7 @@ async def estimate_node(
         }
 
     except Exception as e:
-        logger.error(f"Estimation failed: {e}")
+        logger.error("estimate_node_failed", error=str(e))
         events.append(
             StreamEvent(
                 type="error",
@@ -426,7 +426,7 @@ async def summarize_node(
         }
 
     except Exception as e:
-        logger.error(f"Summary generation failed: {e}")
+        logger.error("summarize_node_failed", error=str(e))
         events.append(
             StreamEvent(
                 type="error",

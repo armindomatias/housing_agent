@@ -11,9 +11,9 @@ Endpoints:
 
 import inspect
 import json
-import logging
 from typing import Any, AsyncGenerator
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl
 from sse_starlette.sse import EventSourceResponse
@@ -21,7 +21,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.graphs.state import create_initial_state
 from app.models.property import RenovationEstimate
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/analyze", tags=["analysis"])
 
@@ -89,7 +89,7 @@ async def stream_analysis(
                     sent_events += 1
 
     except Exception as e:
-        logger.error(f"Stream analysis error: {e}")
+        logger.error("stream_analysis_error", error=str(e))
         error_event = {
             "type": "error",
             "message": f"Erro inesperado: {str(e)}",
@@ -123,6 +123,7 @@ async def analyze_property_stream(
       -d '{"url": "https://www.idealista.pt/imovel/12345678/"}'
     ```
     """
+    structlog.contextvars.bind_contextvars(property_url=str(body.url))
     graph = request.app.state.graph
     return EventSourceResponse(
         stream_analysis(str(body.url), body.user_id, graph),
@@ -144,6 +145,7 @@ async def analyze_property_sync(
     Returns the complete RenovationEstimate or an error message.
     """
     try:
+        structlog.contextvars.bind_contextvars(property_url=str(body.url))
         graph = request.app.state.graph
         initial_state = create_initial_state(str(body.url), body.user_id)
 
@@ -168,7 +170,7 @@ async def analyze_property_sync(
         )
 
     except Exception as e:
-        logger.error(f"Sync analysis error: {e}")
+        logger.error("sync_analysis_error", error=str(e))
         raise HTTPException(
             status_code=500,
             detail=f"Erro na análise: {str(e)}",
