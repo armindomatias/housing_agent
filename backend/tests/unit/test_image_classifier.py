@@ -476,6 +476,7 @@ class TestClusterRoomImages:
         mock_response = AsyncMock()
         mock_response.choices = [AsyncMock()]
         mock_response.choices[0].message.content = gpt_response_json
+        mock_response.choices[0].message.refusal = None  # Explicit: no refusal
 
         with patch.object(
             classifier.client.chat.completions,
@@ -517,6 +518,7 @@ class TestClusterRoomImages:
         mock_response = AsyncMock()
         mock_response.choices = [AsyncMock()]
         mock_response.choices[0].message.content = "not valid json {"
+        mock_response.choices[0].message.refusal = None  # Explicit: no refusal
 
         with patch.object(
             classifier.client.chat.completions,
@@ -546,6 +548,7 @@ class TestClusterRoomImages:
         mock_response = AsyncMock()
         mock_response.choices = [AsyncMock()]
         mock_response.choices[0].message.content = gpt_response_json
+        mock_response.choices[0].message.refusal = None  # Explicit: no refusal
 
         with patch.object(
             classifier.client.chat.completions,
@@ -563,6 +566,131 @@ class TestClusterRoomImages:
         cluster_2 = next(c for c in result if c.room_number == 2)
         assert cluster_1.image_indices == [0]
         assert set(cluster_2.image_indices) == {1, 2}
+
+
+class TestClassifySingleImageEdgeCases:
+    """Tests for null content and refusal handling in classify_single_image()."""
+
+    @pytest.mark.asyncio
+    async def test_null_content_returns_other_with_zero_confidence(
+        self, classifier: ImageClassifierService
+    ):
+        """Null message content must return OTHER/0.0 without crashing."""
+        msg = AsyncMock()
+        msg.content = None
+        msg.refusal = None
+
+        choice = AsyncMock()
+        choice.message = msg
+        choice.finish_reason = "stop"
+
+        mock_resp = AsyncMock()
+        mock_resp.choices = [choice]
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ):
+            result = await classifier.classify_single_image("http://img/x.jpg")
+
+        assert result.room_type == RoomType.OTHER
+        assert result.confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_refusal_returns_other_with_zero_confidence(
+        self, classifier: ImageClassifierService
+    ):
+        """OpenAI refusal must return OTHER/0.0 without retrying."""
+        msg = AsyncMock()
+        msg.content = None
+        msg.refusal = "Content policy violation"
+
+        choice = AsyncMock()
+        choice.message = msg
+        choice.finish_reason = "stop"
+
+        mock_resp = AsyncMock()
+        mock_resp.choices = [choice]
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ) as mock_create:
+            result = await classifier.classify_single_image("http://img/x.jpg")
+
+        # Must not retry — only one API call
+        mock_create.assert_awaited_once()
+        assert result.room_type == RoomType.OTHER
+        assert result.confidence == 0.0
+
+
+class TestClusterRoomImagesEdgeCases:
+    """Tests for null content and refusal handling in cluster_room_images()."""
+
+    @pytest.mark.asyncio
+    async def test_null_content_returns_single_cluster_fallback(
+        self, classifier: ImageClassifierService
+    ):
+        """Null message content during clustering falls back to single cluster."""
+        msg = AsyncMock()
+        msg.content = None
+        msg.refusal = None
+
+        choice = AsyncMock()
+        choice.message = msg
+        choice.finish_reason = "stop"
+
+        mock_resp = AsyncMock()
+        mock_resp.choices = [choice]
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ):
+            result = await classifier.cluster_room_images(
+                RoomType.BEDROOM, ["http://img/1.jpg", "http://img/2.jpg"]
+            )
+
+        assert len(result) == 1
+        assert result[0].image_indices == [0, 1]
+        assert result[0].confidence == 0.3
+
+    @pytest.mark.asyncio
+    async def test_refusal_returns_single_cluster_fallback(
+        self, classifier: ImageClassifierService
+    ):
+        """Refusal during clustering falls back to single cluster without retry."""
+        msg = AsyncMock()
+        msg.content = None
+        msg.refusal = "Cannot cluster these images"
+
+        choice = AsyncMock()
+        choice.message = msg
+        choice.finish_reason = "stop"
+
+        mock_resp = AsyncMock()
+        mock_resp.choices = [choice]
+
+        with patch.object(
+            classifier.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ) as mock_create:
+            result = await classifier.cluster_room_images(
+                RoomType.BATHROOM, ["http://img/1.jpg", "http://img/2.jpg", "http://img/3.jpg"]
+            )
+
+        mock_create.assert_awaited_once()
+        assert len(result) == 1
+        assert result[0].image_indices == [0, 1, 2]
+        assert result[0].confidence == 0.3
 
 
 class TestGroupByRoomAsync:

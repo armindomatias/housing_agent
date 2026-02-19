@@ -206,8 +206,35 @@ class ImageClassifierService:
                 )
 
                 # Parse the JSON response
-                content = response.choices[0].message.content
-                data = json.loads(content)
+                msg = response.choices[0].message
+
+                if msg.refusal:
+                    logger.warning(
+                        "classification_refusal",
+                        image_url=image_url,
+                        refusal=msg.refusal,
+                    )
+                    return ImageClassification(
+                        image_url=image_url,
+                        room_type=RoomType.OTHER,
+                        room_number=1,
+                        confidence=0.0,
+                    )
+
+                if msg.content is None:
+                    logger.warning(
+                        "classification_null_content",
+                        image_url=image_url,
+                        finish_reason=response.choices[0].finish_reason,
+                    )
+                    return ImageClassification(
+                        image_url=image_url,
+                        room_type=RoomType.OTHER,
+                        room_number=1,
+                        confidence=0.0,
+                    )
+
+                data = json.loads(msg.content)
 
                 # Map the room type string to our enum
                 room_type_str = data.get("room_type", "outro").lower()
@@ -436,8 +463,39 @@ class ImageClassifierService:
                     response_format={"type": "json_object"},
                 )
 
-            raw = response.choices[0].message.content
-            data = json.loads(raw)
+            cluster_msg = response.choices[0].message
+
+            if cluster_msg.refusal:
+                logger.warning(
+                    "clustering_refusal",
+                    room_type=room_type.value,
+                    refusal=cluster_msg.refusal,
+                )
+                return [
+                    RoomCluster(
+                        room_number=1,
+                        image_indices=list(range(len(image_urls))),
+                        confidence=0.3,
+                        visual_cues="",
+                    )
+                ]
+
+            if cluster_msg.content is None:
+                logger.warning(
+                    "clustering_null_content",
+                    room_type=room_type.value,
+                    finish_reason=response.choices[0].finish_reason,
+                )
+                return [
+                    RoomCluster(
+                        room_number=1,
+                        image_indices=list(range(len(image_urls))),
+                        confidence=0.3,
+                        visual_cues="",
+                    )
+                ]
+
+            data = json.loads(cluster_msg.content)
 
             raw_clusters = data.get("clusters", [])
             parsed: list[RoomCluster] = []

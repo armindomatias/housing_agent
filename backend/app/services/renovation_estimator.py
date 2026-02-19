@@ -96,33 +96,64 @@ class RenovationEstimatorService:
         )
 
         # Build message content with all images
-        content = [{"type": "text", "text": prompt}]
+        # Use content_payload to avoid variable shadowing with the response content below
+        content_payload = [{"type": "text", "text": prompt}]
 
         # Add all images for this room (GPT-4 Vision can analyze multiple)
-        for url in image_urls[:4]:  # Limit to 4 images to manage costs/tokens
-            content.append(
+        capped_urls = image_urls[:4]  # Limit to 4 images to manage costs/tokens
+        for url in capped_urls:
+            content_payload.append(
                 {
                     "type": "image_url",
                     "image_url": {"url": url, "detail": "high"},  # High detail for cost estimation
                 }
             )
 
-        try:
-            response = await self.client.chat.completions.create(
+        # Tracks whether the API returned a refusal (no retry in that case)
+        _refused = False
+
+        async def _call_api() -> str | None:
+            """Make the API call and return content string, or None on refusal/empty."""
+            nonlocal _refused
+            resp = await self.client.chat.completions.create(
                 model=self.model,
-                messages=[{"role": "user", "content": content}],
+                messages=[{"role": "user", "content": content_payload}],
                 max_tokens=2000,  # Increased for detailed room analysis JSON
                 response_format={"type": "json_object"},
             )
+            msg = resp.choices[0].message
 
-            # Parse the JSON response
-            content = response.choices[0].message.content
-            if content is None:
+            if msg.refusal:
+                _refused = True
+                logger.warning(
+                    "room_analysis_refusal",
+                    room_label=room_label,
+                    refusal=msg.refusal,
+                    image_count=len(capped_urls),
+                )
+                return None  # No retry on refusal
+
+            if msg.content is None:
                 logger.warning(
                     "room_analysis_null_content",
                     room_label=room_label,
-                    finish_reason=response.choices[0].finish_reason,
+                    finish_reason=resp.choices[0].finish_reason,
+                    image_count=len(capped_urls),
                 )
+                return None  # Caller will decide whether to retry
+
+            return msg.content
+
+        try:
+            content = await _call_api()
+
+            # Single retry on null content only — refusals are final
+            if content is None and not _refused:
+                logger.info("room_analysis_retrying", room_label=room_label)
+                await asyncio.sleep(1)
+                content = await _call_api()
+
+            if content is None:
                 return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
 
             data = json.loads(content)
@@ -345,7 +376,17 @@ class RenovationEstimatorService:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
             )
-            return response.choices[0].message.content.strip()
+            msg = response.choices[0].message
+            if msg.refusal:
+                logger.warning("summary_generation_refusal", refusal=msg.refusal)
+                raise ValueError("OpenAI refused to generate summary")
+            if msg.content is None:
+                logger.warning(
+                    "summary_generation_null_content",
+                    finish_reason=response.choices[0].finish_reason,
+                )
+                raise ValueError("OpenAI returned null content for summary")
+            return msg.content.strip()
         except Exception as e:
             logger.error("summary_generation_error", error=str(e))
             return (
