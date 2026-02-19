@@ -93,13 +93,27 @@ async def scrape_node(
                 total=len(property_data.image_urls),
                 converted=len(image_data),
             )
+
+            # Remap image_tags: keys change from original URL to resolved URL (base64 or
+            # original fallback). Without this, classify_node can't find tags for base64
+            # strings and falls back to GPT for every image, defeating the tag optimisation.
+            if property_data.image_tags:
+                orig_to_resolved = dict(zip(property_data.image_urls, resolved_urls))
+                resolved_image_tags = {
+                    orig_to_resolved.get(orig_url, orig_url): tag
+                    for orig_url, tag in property_data.image_tags.items()
+                }
+            else:
+                resolved_image_tags = property_data.image_tags
         else:
             resolved_urls = property_data.image_urls
+            resolved_image_tags = property_data.image_tags
 
         return {
             **state,
             "property_data": property_data,
             "image_urls": resolved_urls,
+            "image_tags": resolved_image_tags,
             "stream_events": events,
             "current_step": "scraped",
         }
@@ -147,10 +161,14 @@ async def classify_node(
     )
 
     try:
-        # Extract Apify image tags from the scraped property data (may be empty dict)
-        # These allow us to skip GPT calls for images that Idealista already labelled.
         property_data = state.get("property_data")
-        image_tags: dict[str, str] | None = property_data.image_tags if property_data else None
+
+        # Use remapped tags from state (keys match resolved URLs, not original ones).
+        # scrape_node always stores "image_tags" — remapped for base64, original otherwise.
+        # Fallback to property_data.image_tags for backwards compatibility.
+        image_tags: dict[str, str] | None = state.get(
+            "image_tags", property_data.image_tags if property_data else None
+        )
 
         # Progress callback to emit events for each image
         async def progress_callback(

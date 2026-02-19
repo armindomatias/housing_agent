@@ -693,6 +693,88 @@ class TestClusterRoomImagesEdgeCases:
         assert result[0].confidence == 0.3
 
 
+class TestCapToExpectedRooms:
+    """Tests for ImageClassifierService._cap_to_expected_rooms()."""
+
+    def _make_cluster(
+        self,
+        room_number: int,
+        image_indices: list[int],
+        confidence: float = 0.8,
+    ) -> RoomCluster:
+        return RoomCluster(
+            room_number=room_number,
+            image_indices=image_indices,
+            confidence=confidence,
+            visual_cues="",
+        )
+
+    def test_no_cap_when_at_or_below_limit(self, classifier: ImageClassifierService):
+        """When clusters <= expected_rooms, returns them unchanged."""
+        clusters = [
+            self._make_cluster(1, [0, 1]),
+            self._make_cluster(2, [2]),
+        ]
+        result = classifier._cap_to_expected_rooms(clusters, 2, RoomType.BEDROOM)
+        assert len(result) == 2
+
+    def test_caps_two_to_one_for_t1(self, classifier: ImageClassifierService):
+        """T1 scenario: 2 clusters merged into 1."""
+        clusters = [
+            self._make_cluster(1, [0, 1], confidence=0.9),
+            self._make_cluster(2, [2], confidence=0.6),
+        ]
+        result = classifier._cap_to_expected_rooms(clusters, 1, RoomType.BEDROOM)
+        assert len(result) == 1
+        # All 3 image indices must be covered
+        assert set(result[0].image_indices) == {0, 1, 2}
+
+    def test_caps_three_to_two_for_t2(self, classifier: ImageClassifierService):
+        """T2 scenario: 3 clusters merged into 2."""
+        clusters = [
+            self._make_cluster(1, [0], confidence=0.9),
+            self._make_cluster(2, [1], confidence=0.85),
+            self._make_cluster(3, [2], confidence=0.5),
+        ]
+        result = classifier._cap_to_expected_rooms(clusters, 2, RoomType.BEDROOM)
+        assert len(result) == 2
+        all_indices = {i for c in result for i in c.image_indices}
+        assert all_indices == {0, 1, 2}
+
+    def test_keeps_highest_confidence_clusters(self, classifier: ImageClassifierService):
+        """When merging, the highest-confidence clusters survive intact."""
+        clusters = [
+            self._make_cluster(1, [0], confidence=0.5),
+            self._make_cluster(2, [1], confidence=0.9),   # highest — must survive
+            self._make_cluster(3, [2], confidence=0.3),
+        ]
+        result = classifier._cap_to_expected_rooms(clusters, 1, RoomType.BATHROOM)
+        assert len(result) == 1
+        # Image index 1 (from the highest-confidence cluster) must be in the result
+        assert 1 in result[0].image_indices
+
+    def test_room_numbers_resequenced_after_cap(self, classifier: ImageClassifierService):
+        """Room numbers are always 1..N after capping."""
+        clusters = [
+            self._make_cluster(3, [0], confidence=0.9),
+            self._make_cluster(7, [1], confidence=0.8),
+            self._make_cluster(2, [2], confidence=0.5),
+        ]
+        result = classifier._cap_to_expected_rooms(clusters, 2, RoomType.BEDROOM)
+        assert [c.room_number for c in result] == [1, 2]
+
+    def test_all_images_covered_after_cap(self, classifier: ImageClassifierService):
+        """Every image index from the original clusters appears in the result."""
+        clusters = [
+            self._make_cluster(1, [0, 1], confidence=0.9),
+            self._make_cluster(2, [2, 3], confidence=0.7),
+            self._make_cluster(3, [4], confidence=0.4),
+        ]
+        result = classifier._cap_to_expected_rooms(clusters, 1, RoomType.BEDROOM)
+        all_indices = {i for c in result for i in c.image_indices}
+        assert all_indices == {0, 1, 2, 3, 4}
+
+
 class TestGroupByRoomAsync:
     """Tests for the async ImageClassifierService.group_by_room()."""
 

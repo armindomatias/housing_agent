@@ -537,6 +537,56 @@ class ImageClassifierService:
                 )
             ]
 
+    def _cap_to_expected_rooms(
+        self,
+        clusters: list[RoomCluster],
+        expected_rooms: int,
+        room_type: RoomType,
+    ) -> list[RoomCluster]:
+        """
+        Merge excess clusters down to exactly expected_rooms when GPT over-clusters.
+
+        Keeps the highest-confidence clusters intact and distributes the extra
+        clusters' image indices into them round-robin. Room numbers are
+        re-sequenced 1..N afterwards.
+
+        Example: T1 apartment has 3 bedroom photos. GPT returns 2 clusters
+        (different angles fooled it). expected_rooms=1 → both clusters merge
+        into one, producing a single "Quarto 1" for estimation.
+
+        Args:
+            clusters:       Validated cluster list from _validate_clusters().
+            expected_rooms: Maximum number of distinct rooms to produce.
+            room_type:      Room type (used for logging only).
+
+        Returns:
+            List of at most expected_rooms clusters covering all image indices.
+        """
+        if len(clusters) <= expected_rooms:
+            return clusters
+
+        logger.warning(
+            "clustering_capped_to_expected",
+            room_type=room_type.value,
+            found=len(clusters),
+            capped_to=expected_rooms,
+        )
+
+        # Highest-confidence clusters survive; extras are absorbed into them
+        sorted_clusters = sorted(clusters, key=lambda c: c.confidence, reverse=True)
+        kept = sorted_clusters[:expected_rooms]
+        extra = sorted_clusters[expected_rooms:]
+
+        for i, extra_cluster in enumerate(extra):
+            target = kept[i % expected_rooms]
+            target.image_indices.extend(extra_cluster.image_indices)
+
+        # Re-sequence room numbers 1..N
+        for i, cluster in enumerate(kept, start=1):
+            cluster.room_number = i
+
+        return kept
+
     def _validate_clusters(
         self,
         clusters: list[RoomCluster],
@@ -737,6 +787,11 @@ class ImageClassifierService:
             validated = self._validate_clusters(clusters, len(items))
             if validated is None:
                 validated = self._metadata_fallback(len(items), expected_rooms)
+            elif expected_rooms is not None and expected_rooms > 0 and len(validated) > expected_rooms:
+                # Never produce more distinct rooms than the property metadata says exist.
+                # GPT sometimes over-clusters when photos of the same room look slightly
+                # different (angle, lighting, staging). Cap and merge the excess.
+                validated = self._cap_to_expected_rooms(validated, expected_rooms, room_type)
 
             return room_type, validated
 
