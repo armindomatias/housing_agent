@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     openai_vision_model: str = "gpt-4o"
     openai_classification_model: str = "gpt-4o-mini"
 
+    # LangSmith / Observability
+    langsmith_api_key: str = ""
+    langsmith_project: str = "rehabify"
+    langchain_tracing_v2: bool = False  # Explicit opt-in
+
     # App Settings
     debug: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]
