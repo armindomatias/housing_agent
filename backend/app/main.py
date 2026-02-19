@@ -9,6 +9,7 @@ Run with:
     uvicorn app.main:app --reload
 """
 
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -27,6 +28,14 @@ from app.services.renovation_estimator import RenovationEstimatorService
 
 # Get settings before logging setup so we know the debug flag
 settings = get_settings()
+
+# Propagate LangSmith settings into os.environ so the SDK can find them.
+# pydantic-settings reads .env into the Settings model but does NOT inject
+# values into os.environ, which is where langsmith and openai_client.py look.
+if settings.langchain_tracing_v2 and settings.langsmith_api_key:
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
 
 # Configure logging
 setup_logging(settings.debug)
