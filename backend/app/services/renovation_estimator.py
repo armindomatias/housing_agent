@@ -25,9 +25,8 @@ Usage:
 
 import asyncio
 import json
-import logging
 
-from openai import AsyncOpenAI
+import structlog
 
 from app.models.property import (
     ImageClassification,
@@ -40,8 +39,9 @@ from app.models.property import (
 )
 from app.prompts.renovation import ROOM_ANALYSIS_PROMPT, SUMMARY_PROMPT
 from app.services.image_classifier import get_room_label
+from app.services.openai_client import get_openai_client
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class RenovationEstimatorService:
@@ -63,7 +63,7 @@ class RenovationEstimatorService:
                             3 is a safe default — GPT-4o Vision calls are heavy
                             and the Tier-1 rate limit is typically 500 RPM.
         """
-        self.client = AsyncOpenAI(api_key=openai_api_key)
+        self.client = get_openai_client(openai_api_key)
         self.model = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -119,8 +119,9 @@ class RenovationEstimatorService:
             content = response.choices[0].message.content
             if content is None:
                 logger.warning(
-                    f"OpenAI returned null content for {room_label} "
-                    f"(finish_reason={response.choices[0].finish_reason!r})"
+                    "room_analysis_null_content",
+                    room_label=room_label,
+                    finish_reason=response.choices[0].finish_reason,
                 )
                 return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
 
@@ -162,11 +163,14 @@ class RenovationEstimatorService:
             )
 
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse room analysis JSON for {room_label}: {e}")
-            logger.debug(f"Raw response content: {content[:500] if content else 'None'}")
+            logger.warning("room_analysis_json_parse_error", room_label=room_label, error=str(e))
+            logger.debug(
+                "room_analysis_raw_content",
+                content=content[:500] if content else "None",
+            )
             return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
         except Exception as e:
-            logger.error(f"Error analyzing room {room_label}: {e}")
+            logger.error("room_analysis_api_error", room_label=room_label, error=str(e))
             return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
 
     def _map_condition(self, condition_str: str) -> RoomCondition:
@@ -343,7 +347,7 @@ class RenovationEstimatorService:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"Error generating summary: {e}")
+            logger.error("summary_generation_error", error=str(e))
             return (
                 f"Estimativa total de remodelação: {total_min:,.0f}€ - {total_max:,.0f}€. "
                 f"Analisadas {len(room_analyses)} divisões."

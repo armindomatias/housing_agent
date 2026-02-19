@@ -36,15 +36,15 @@ Usage:
 
 import asyncio
 import json
-import logging
 from collections import defaultdict
 
-from openai import AsyncOpenAI
+import structlog
 
 from app.models.property import ImageClassification, RoomCluster, RoomType
 from app.prompts.renovation import IMAGE_CLASSIFICATION_PROMPT, ROOM_CLUSTERING_PROMPT
+from app.services.openai_client import get_openai_client
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Room types that can have multiple distinct physical rooms and benefit from vision clustering
 MULTI_ROOM_TYPES: set[RoomType] = {RoomType.BEDROOM, RoomType.BATHROOM}
@@ -171,7 +171,7 @@ class ImageClassifierService:
             model: Model to use for classification (default: gpt-4o-mini for cost efficiency)
             max_concurrent: Maximum concurrent API calls to prevent rate limiting
         """
-        self.client = AsyncOpenAI(api_key=openai_api_key)
+        self.client = get_openai_client(openai_api_key)
         self.model = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -221,7 +221,7 @@ class ImageClassifierService:
                 )
 
             except json.JSONDecodeError as e:
-                logger.warning(f"Failed to parse classification JSON for {image_url}: {e}")
+                logger.warning("classification_json_parse_error", image_url=image_url, error=str(e))
                 return ImageClassification(
                     image_url=image_url,
                     room_type=RoomType.OTHER,
@@ -229,7 +229,7 @@ class ImageClassifierService:
                     confidence=0.0,
                 )
             except Exception as e:
-                logger.error(f"Error classifying image {image_url}: {e}")
+                logger.error("classification_api_error", image_url=image_url, error=str(e))
                 return ImageClassification(
                     image_url=image_url,
                     room_type=RoomType.OTHER,
@@ -324,8 +324,10 @@ class ImageClassifierService:
                 untagged_urls.append(url)
 
             logger.info(
-                f"Classification strategy: {len(tagged)} tag-based (free), "
-                f"{len(untagged_urls)} via GPT"
+                "classification_strategy_chosen",
+                tagged_count=len(tagged),
+                gpt_count=len(untagged_urls),
+                total=total,
             )
         else:
             # No tags provided — all images need GPT
@@ -452,8 +454,9 @@ class ImageClassifierService:
             validated = self._validate_clusters(parsed, len(image_urls))
             if validated is None:
                 logger.warning(
-                    f"GPT clustering output invalid for {room_type.value}, "
-                    "falling back to single-group"
+                    "clustering_output_invalid",
+                    room_type=room_type.value,
+                    detail="falling back to single-group",
                 )
                 return [
                     RoomCluster(
@@ -466,7 +469,7 @@ class ImageClassifierService:
             return validated
 
         except Exception as e:
-            logger.error(f"Error clustering {room_type.value} images: {e}")
+            logger.error("clustering_api_error", room_type=room_type.value, error=str(e))
             return [
                 RoomCluster(
                     room_number=1,
@@ -504,10 +507,10 @@ class ImageClassifierService:
         for cluster in clusters:
             for idx in cluster.image_indices:
                 if idx < 0 or idx >= num_images:
-                    logger.warning(f"Cluster index {idx} out of range [0, {num_images})")
+                    logger.warning("cluster_index_out_of_range", idx=idx, num_images=num_images)
                     return None
                 if idx in seen:
-                    logger.warning(f"Duplicate cluster index {idx}")
+                    logger.warning("cluster_index_duplicate", idx=idx)
                     return None
                 seen.add(idx)
 
