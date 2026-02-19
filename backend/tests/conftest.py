@@ -3,6 +3,7 @@ Shared test fixtures for the Rehabify backend test suite.
 """
 
 import pytest
+import structlog
 from fastapi.testclient import TestClient
 
 from app.models.property import (
@@ -20,6 +21,24 @@ def _set_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set required environment variables for tests so Settings can be instantiated."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-fake-key-for-testing")
     monkeypatch.setenv("APIFY_TOKEN", "apify-test-fake-token")
+    # Disable LangSmith tracing in tests
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+
+
+@pytest.fixture(autouse=True)
+def _configure_structlog_for_tests():
+    """Configure structlog for tests using a simple, deterministic setup."""
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.dev.ConsoleRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(0),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=False,
+    )
 
 
 @pytest.fixture

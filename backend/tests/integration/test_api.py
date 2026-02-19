@@ -37,3 +37,24 @@ class TestAnalyzeHealthEndpoint:
         data = response.json()
         assert data["status"] == "healthy"
         assert data["service"] == "rehabify-analyzer"
+
+
+class TestRequestContextMiddleware:
+    """Tests for X-Request-ID header injected by RequestContextMiddleware."""
+
+    def test_request_id_header_present(self, client: TestClient):
+        response = client.get("/health")
+        assert "x-request-id" in response.headers
+
+    def test_request_id_is_valid_uuid(self, client: TestClient):
+        import uuid
+
+        response = client.get("/health")
+        request_id = response.headers["x-request-id"]
+        # Should not raise ValueError
+        uuid.UUID(request_id)
+
+    def test_request_id_unique_per_request(self, client: TestClient):
+        r1 = client.get("/health")
+        r2 = client.get("/health")
+        assert r1.headers["x-request-id"] != r2.headers["x-request-id"]
