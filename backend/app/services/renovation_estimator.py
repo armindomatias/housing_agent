@@ -11,9 +11,9 @@ min–max range to reflect inherent uncertainty from photo-only analysis.
 ## Concurrency model
 
 analyze_all_rooms() submits one async task per room and collects results
-with asyncio.as_completed(). A semaphore (default: 3 slots) caps concurrent
-GPT-4o calls to stay within rate limits. Progress events fire as each room
-finishes, in whatever order — the frontend only cares about current/total counts.
+with asyncio.as_completed(). A semaphore caps concurrent GPT-4o calls to
+stay within rate limits. Progress events fire as each room finishes, in
+whatever order — the frontend only cares about current/total counts.
 
 For a 5-room property this reduces wall-clock time from ~35 s (serial) to
 ~12 s (parallel), bounded by the slowest single call rather than the sum.
@@ -28,6 +28,14 @@ import json
 
 import structlog
 
+from app.config import ImageProcessingConfig, OpenAIConfig
+from app.constants import (
+    CONDITION_MAP,
+    FALLBACK_CONFIDENCE,
+    FALLBACK_COSTS,
+    IMAGE_BOOST_MAX,
+    IMAGE_BOOST_PER_IMAGE,
+)
 from app.models.property import (
     FloorPlanAnalysis,
     FloorPlanIdea,
@@ -52,22 +60,26 @@ class RenovationEstimatorService:
     def __init__(
         self,
         openai_api_key: str,
-        model: str = "gpt-4o",      # Use full GPT-4o for better analysis
-        max_concurrent: int = 3,    # Concurrent GPT-4o calls (rate-limit guard)
+        model: str = "gpt-4o",
+        max_concurrent: int = 3,
+        openai_config: OpenAIConfig | None = None,
+        image_processing: ImageProcessingConfig | None = None,
     ):
         """
         Initialize the renovation estimator.
 
         Args:
-            openai_api_key: OpenAI API key
-            model:          Model to use for analysis (default: gpt-4o for quality)
-            max_concurrent: Maximum simultaneous room-analysis API calls.
-                            3 is a safe default — GPT-4o Vision calls are heavy
-                            and the Tier-1 rate limit is typically 500 RPM.
+            openai_api_key:   OpenAI API key
+            model:            Model to use for analysis
+            max_concurrent:   Maximum simultaneous room-analysis API calls.
+            openai_config:    OpenAI call parameters (max_tokens, detail levels).
+            image_processing: Image processing limits (images per room analysis).
         """
         self.client = get_openai_client(openai_api_key)
         self.model = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.openai_config = openai_config or OpenAIConfig()
+        self.image_processing = image_processing or ImageProcessingConfig()
 
     async def analyze_room(
         self,
@@ -101,13 +113,16 @@ class RenovationEstimatorService:
         # Use content_payload to avoid variable shadowing with the response content below
         content_payload = [{"type": "text", "text": prompt}]
 
-        # Add all images for this room (GPT-4 Vision can analyze multiple)
-        capped_urls = image_urls[:4]  # Limit to 4 images to manage costs/tokens
+        # Add images for this room (limited to config.images_per_room_analysis to manage costs)
+        capped_urls = image_urls[:self.image_processing.images_per_room_analysis]
         for url in capped_urls:
             content_payload.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": url, "detail": "high"},  # High detail for cost estimation
+                    "image_url": {
+                        "url": url,
+                        "detail": self.openai_config.estimation_detail,
+                    },
                 }
             )
 
@@ -120,7 +135,7 @@ class RenovationEstimatorService:
             resp = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": content_payload}],
-                max_tokens=2000,  # Increased for detailed room analysis JSON
+                max_tokens=self.openai_config.room_analysis_max_tokens,
                 response_format={"type": "json_object"},
             )
             msg = resp.choices[0].message
@@ -177,9 +192,8 @@ class RenovationEstimatorService:
             condition = self._map_condition(data.get("condition", "razoavel"))
 
             # Calculate confidence boost based on number of images
-            # More images = higher confidence
             base_confidence = float(data.get("confidence", 0.5))
-            image_boost = min(0.2, len(image_urls) * 0.05)  # Up to 0.2 boost
+            image_boost = min(IMAGE_BOOST_MAX, len(image_urls) * IMAGE_BOOST_PER_IMAGE)
             final_confidence = min(1.0, base_confidence + image_boost)
 
             return RoomAnalysis(
@@ -216,20 +230,7 @@ class RenovationEstimatorService:
         Returns:
             Corresponding RoomCondition enum value
         """
-        mapping = {
-            "excelente": RoomCondition.EXCELLENT,
-            "excellent": RoomCondition.EXCELLENT,
-            "bom": RoomCondition.GOOD,
-            "good": RoomCondition.GOOD,
-            "razoavel": RoomCondition.FAIR,
-            "razoável": RoomCondition.FAIR,
-            "fair": RoomCondition.FAIR,
-            "mau": RoomCondition.POOR,
-            "poor": RoomCondition.POOR,
-            "necessita_remodelacao_total": RoomCondition.NEEDS_FULL_RENOVATION,
-            "needs_full_renovation": RoomCondition.NEEDS_FULL_RENOVATION,
-        }
-        return mapping.get(condition_str.lower(), RoomCondition.FAIR)
+        return CONDITION_MAP.get(condition_str.lower(), RoomCondition.FAIR)
 
     def _get_fallback_analysis(
         self,
@@ -241,23 +242,9 @@ class RenovationEstimatorService:
         """
         Return a fallback analysis when GPT fails.
 
-        Uses conservative estimates based on room type.
+        Uses conservative estimates from FALLBACK_COSTS based on room type.
         """
-        # Conservative fallback estimates by room type
-        fallback_costs = {
-            RoomType.KITCHEN: (5000, 15000),
-            RoomType.BATHROOM: (3000, 8000),
-            RoomType.BEDROOM: (1000, 3000),
-            RoomType.LIVING_ROOM: (1500, 5000),
-            RoomType.HALLWAY: (500, 1500),
-            RoomType.BALCONY: (500, 2000),
-            RoomType.EXTERIOR: (0, 0),
-            RoomType.GARAGE: (500, 2000),
-            RoomType.STORAGE: (200, 800),
-            RoomType.OTHER: (500, 2000),
-        }
-
-        cost_min, cost_max = fallback_costs.get(room_type, (500, 2000))
+        cost_min, cost_max = FALLBACK_COSTS.get(room_type, (500, 2000))
 
         return RoomAnalysis(
             room_type=room_type,
@@ -277,7 +264,7 @@ class RenovationEstimatorService:
             ],
             cost_min=cost_min,
             cost_max=cost_max,
-            confidence=0.3,  # Low confidence for fallback
+            confidence=FALLBACK_CONFIDENCE,
         )
 
     async def analyze_all_rooms(
@@ -290,7 +277,7 @@ class RenovationEstimatorService:
 
         Submits one bounded coroutine per room via asyncio.as_completed() so
         progress events fire as each room finishes rather than waiting for all.
-        The semaphore caps concurrent GPT-4o calls at self.max_concurrent (default 3).
+        The semaphore caps concurrent GPT-4o calls at self.max_concurrent.
 
         Args:
             grouped_images:    Dict mapping room key → list[ImageClassification].
@@ -382,7 +369,7 @@ class RenovationEstimatorService:
             content_payload.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": url, "detail": "high"},
+                    "image_url": {"url": url, "detail": self.openai_config.estimation_detail},
                 }
             )
 
@@ -391,7 +378,7 @@ class RenovationEstimatorService:
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": content_payload}],
-                    max_tokens=1500,
+                    max_tokens=self.openai_config.floor_plan_max_tokens,
                     response_format={"type": "json_object"},
                 )
 
@@ -472,7 +459,7 @@ class RenovationEstimatorService:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
+                max_tokens=self.openai_config.summary_max_tokens,
             )
             msg = response.choices[0].message
             if msg.refusal:

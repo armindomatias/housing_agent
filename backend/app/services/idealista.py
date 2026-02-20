@@ -19,28 +19,28 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.config import ApifyConfig
 from app.models.property import PropertyData
 
 logger = logging.getLogger(__name__)
-
-APIFY_STANDBY_URL = "https://dz-omar--idealista-scraper-api.apify.actor"
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 2  # seconds
 
 
 class IdealistaService:
     """Service for scraping property data from Idealista using Apify."""
 
-    def __init__(self, apify_token: str):
+    def __init__(self, apify_token: str, apify_config: ApifyConfig | None = None):
         """
         Initialize the Idealista service.
 
         Args:
-            apify_token: Apify API token for authentication
+            apify_token:  Apify API token for authentication
+            apify_config: Apify operational config (URL, retries, timeouts).
         """
         self.apify_token = apify_token
-        #self.apify_standby_url_w_token = f"{APIFY_STANDBY_URL}{apify_token}"
-        self._client = httpx.AsyncClient(timeout=120.0)
+        self.apify_config = apify_config or ApifyConfig()
+        self._client = httpx.AsyncClient(
+            timeout=self.apify_config.request_timeout_seconds
+        )
 
     async def close(self):
         """Close the HTTP client."""
@@ -123,8 +123,10 @@ class IdealistaService:
             httpx.ConnectError: If all retries fail to connect
         """
         last_exception: Exception | None = None
+        max_retries = self.apify_config.max_retries
+        retry_base_delay = self.apify_config.retry_base_delay_seconds
 
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(max_retries):
             try:
                 response = await self._client.post(
                     url,
@@ -140,11 +142,11 @@ class IdealistaService:
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
                 last_exception = exc
 
-            delay = RETRY_BASE_DELAY * (2 ** attempt)
+            delay = retry_base_delay * (2 ** attempt)
             logger.warning(
                 "Apify request attempt %d/%d failed: %s. Retrying in %ds...",
                 attempt + 1,
-                MAX_RETRIES,
+                max_retries,
                 last_exception,
                 delay,
             )
@@ -183,7 +185,7 @@ class IdealistaService:
             return self._get_mock_data(url, property_id)
 
         payload = {"Property_urls": [{"url": url}]}
-        response = await self._request_with_retry(APIFY_STANDBY_URL, payload)
+        response = await self._request_with_retry(self.apify_config.standby_url, payload)
 
         items = self._parse_ndjson_response(response.text)
 
@@ -369,9 +371,11 @@ class IdealistaService:
         )
 
 
-def create_idealista_service(apify_token: str) -> IdealistaService:
+def create_idealista_service(
+    apify_token: str, apify_config: ApifyConfig | None = None
+) -> IdealistaService:
     """Create an IdealistaService instance."""
-    return IdealistaService(apify_token)
+    return IdealistaService(apify_token, apify_config)
 
 
 if __name__ == "__main__":

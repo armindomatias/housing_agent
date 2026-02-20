@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.analyze import router as analyze_router
 from app.config import get_settings
+from app.constants import API_TITLE, API_VERSION
 from app.graphs.main_graph import build_renovation_graph
 from app.logging_config import setup_logging
 from app.middleware import RequestContextMiddleware
@@ -60,16 +61,21 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("apify_configured")
 
     # Create services once at startup
-    idealista_service = IdealistaService(settings.apify_token)
+    idealista_service = IdealistaService(settings.apify_token, settings.apify)
     classifier_service = ImageClassifierService(
         settings.openai_api_key,
         model=settings.openai_classification_model,
+        max_concurrent=settings.image_processing.max_concurrent_classifications,
+        openai_config=settings.openai_config,
     )
     estimator_service = RenovationEstimatorService(
         settings.openai_api_key,
         model=settings.openai_vision_model,
+        max_concurrent=settings.image_processing.max_concurrent_estimations,
+        openai_config=settings.openai_config,
+        image_processing=settings.image_processing,
     )
-    downloader = ImageDownloaderService() if settings.use_base64_images else None
+    downloader = ImageDownloaderService(settings.image_processing) if settings.use_base64_images else None
 
     if settings.use_base64_images:
         logger.info("base64_image_pipeline_enabled")
@@ -96,13 +102,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 # Create FastAPI app
 app = FastAPI(
-    title="Rehabify API",
+    title=API_TITLE,
     description=(
         "API para análise de imóveis e estimativa de custos de remodelação. "
         "Analisa anúncios do Idealista e fornece estimativas detalhadas "
         "de custos de renovação usando inteligência artificial."
     ),
-    version="0.1.0",
+    version=API_VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -129,8 +135,8 @@ app.include_router(analyze_router, prefix="/api/v1")
 async def root() -> dict:
     """Root endpoint with API info."""
     return {
-        "name": "Rehabify API",
-        "version": "0.1.0",
+        "name": API_TITLE,
+        "version": API_VERSION,
         "description": "API para análise de imóveis e estimativa de custos de remodelação",
         "docs": "/docs",
     }

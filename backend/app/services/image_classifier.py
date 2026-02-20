@@ -40,17 +40,21 @@ from collections import defaultdict
 
 import structlog
 
+from app.config import OpenAIConfig
+from app.constants import (
+    APIFY_TAG_MAP,
+    FALLBACK_CONFIDENCE,
+    GPT_ROOM_TYPE_MAP,
+    MAX_CLUSTERING_IMAGES,
+    MULTI_ROOM_TYPES,
+    ROOM_TYPE_LABELS,
+    TAG_CLASSIFICATION_CONFIDENCE,
+)
 from app.models.property import ImageClassification, RoomCluster, RoomType
 from app.prompts.renovation import IMAGE_CLASSIFICATION_PROMPT, ROOM_CLUSTERING_PROMPT
 from app.services.openai_client import get_openai_client
 
 logger = structlog.get_logger(__name__)
-
-# Room types that can have multiple distinct physical rooms and benefit from vision clustering
-MULTI_ROOM_TYPES: set[RoomType] = {RoomType.BEDROOM, RoomType.BATHROOM}
-
-# Maximum images to send in a single clustering API call
-MAX_CLUSTERING_IMAGES = 10
 
 
 def get_room_label(room_type: RoomType, room_number: int) -> str:
@@ -64,21 +68,7 @@ def get_room_label(room_type: RoomType, room_number: int) -> str:
     Returns:
         Human-readable label in Portuguese, e.g., "Cozinha", "Quarto 1"
     """
-    labels = {
-        RoomType.KITCHEN: "Cozinha",
-        RoomType.LIVING_ROOM: "Sala",
-        RoomType.BEDROOM: "Quarto",
-        RoomType.BATHROOM: "Casa de Banho",
-        RoomType.HALLWAY: "Corredor",
-        RoomType.BALCONY: "Varanda",
-        RoomType.EXTERIOR: "Exterior",
-        RoomType.GARAGE: "Garagem",
-        RoomType.STORAGE: "Arrecadação",
-        RoomType.FLOOR_PLAN: "Planta",
-        RoomType.OTHER: "Outro",
-    }
-
-    base_label = labels.get(room_type, "Outro")
+    base_label = ROOM_TYPE_LABELS.get(room_type, "Outro")
 
     # Add number for rooms that can have multiples
     if room_type in [RoomType.BEDROOM, RoomType.BATHROOM] and room_number > 0:
@@ -87,53 +77,14 @@ def get_room_label(room_type: RoomType, room_number: int) -> str:
     return base_label
 
 
-# ---------------------------------------------------------------------------
-# Apify tag → RoomType mapping
-# ---------------------------------------------------------------------------
-# Apify's Idealista scraper attaches a "tag" string (English) to each image,
-# mirroring the label Idealista itself assigns. Every known tag is mapped here;
-# any tag absent from this dict falls back to GPT classification.
-#
-# room_number is always 1 for tag-based results because Apify tags carry no
-# numbering (e.g., "bedroom" not "bedroom_2").  Multiple bedroom photos end up
-# grouped under "quarto_1" — still correct for estimation purposes.
-# ---------------------------------------------------------------------------
-_APIFY_TAG_MAP: dict[str, RoomType] = {
-    "kitchen": RoomType.KITCHEN,
-    "bedroom": RoomType.BEDROOM,
-    "bathroom": RoomType.BATHROOM,
-    "livingroom": RoomType.LIVING_ROOM,      # normalised (strip spaces/dashes)
-    "living_room": RoomType.LIVING_ROOM,
-    "living-room": RoomType.LIVING_ROOM,
-    "lounge": RoomType.LIVING_ROOM,
-    "dining": RoomType.LIVING_ROOM,
-    "diningroom": RoomType.LIVING_ROOM,
-    "terrace": RoomType.BALCONY,
-    "balcony": RoomType.BALCONY,
-    "exterior": RoomType.EXTERIOR,
-    "facade": RoomType.EXTERIOR,
-    "garden": RoomType.EXTERIOR,
-    "garage": RoomType.GARAGE,
-    "storage": RoomType.STORAGE,
-    "hallway": RoomType.HALLWAY,
-    "hall": RoomType.HALLWAY,
-    "corridor": RoomType.HALLWAY,
-    "laundry": RoomType.STORAGE,
-    "office": RoomType.OTHER,
-    "pool": RoomType.EXTERIOR,
-    "planta": RoomType.FLOOR_PLAN,
-    "floor_plan": RoomType.FLOOR_PLAN,
-    "floorplan": RoomType.FLOOR_PLAN,
-}
-
-
 def classify_from_tag(image_url: str, tag: str) -> ImageClassification | None:
     """
     Classify an image using Apify's free tag metadata — no GPT call needed.
 
     Apify's Idealista actor attaches a "tag" string to every image. When the
     tag maps to a known RoomType we return an ImageClassification directly at
-    confidence=0.9 (slightly below 1.0 to signal it wasn't manually verified).
+    TAG_CLASSIFICATION_CONFIDENCE (slightly below 1.0 to signal it wasn't
+    manually verified).
 
     Args:
         image_url: URL of the image (used as identifier in the result).
@@ -145,7 +96,7 @@ def classify_from_tag(image_url: str, tag: str) -> ImageClassification | None:
     """
     # Normalise: lowercase + strip whitespace
     normalised = tag.strip().lower()
-    room_type = _APIFY_TAG_MAP.get(normalised)
+    room_type = APIFY_TAG_MAP.get(normalised)
 
     if room_type is None:
         return None  # Unknown tag — caller must fall back to GPT
@@ -154,7 +105,7 @@ def classify_from_tag(image_url: str, tag: str) -> ImageClassification | None:
         image_url=image_url,
         room_type=room_type,
         room_number=1,      # Apify tags carry no room-number information
-        confidence=0.9,     # High confidence but not 1.0 (not human-verified)
+        confidence=TAG_CLASSIFICATION_CONFIDENCE,
     )
 
 
@@ -164,20 +115,23 @@ class ImageClassifierService:
     def __init__(
         self,
         openai_api_key: str,
-        model: str = "gpt-4o-mini",  # Use mini for classification (cheaper, fast enough)
-        max_concurrent: int = 5,  # Limit concurrent API calls
+        model: str = "gpt-4o-mini",
+        max_concurrent: int = 5,
+        openai_config: OpenAIConfig | None = None,
     ):
         """
         Initialize the image classifier.
 
         Args:
             openai_api_key: OpenAI API key
-            model: Model to use for classification (default: gpt-4o-mini for cost efficiency)
+            model: Model to use for classification
             max_concurrent: Maximum concurrent API calls to prevent rate limiting
+            openai_config: OpenAI call parameters (max_tokens, detail levels)
         """
         self.client = get_openai_client(openai_api_key)
         self.model = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.openai_config = openai_config or OpenAIConfig()
 
     async def classify_single_image(self, image_url: str) -> ImageClassification:
         """
@@ -200,12 +154,15 @@ class ImageClassifierService:
                                 {"type": "text", "text": IMAGE_CLASSIFICATION_PROMPT},
                                 {
                                     "type": "image_url",
-                                    "image_url": {"url": image_url, "detail": "low"},
+                                    "image_url": {
+                                        "url": image_url,
+                                        "detail": self.openai_config.classification_detail,
+                                    },
                                 },
                             ],
                         }
                     ],
-                    max_tokens=200,
+                    max_tokens=self.openai_config.classification_max_tokens,
                     response_format={"type": "json_object"},
                 )
 
@@ -278,35 +235,7 @@ class ImageClassifierService:
         Returns:
             Corresponding RoomType enum value
         """
-        mapping = {
-            "cozinha": RoomType.KITCHEN,
-            "kitchen": RoomType.KITCHEN,
-            "sala": RoomType.LIVING_ROOM,
-            "living_room": RoomType.LIVING_ROOM,
-            "living room": RoomType.LIVING_ROOM,
-            "sala de estar": RoomType.LIVING_ROOM,
-            "quarto": RoomType.BEDROOM,
-            "bedroom": RoomType.BEDROOM,
-            "casa_de_banho": RoomType.BATHROOM,
-            "casa de banho": RoomType.BATHROOM,
-            "bathroom": RoomType.BATHROOM,
-            "wc": RoomType.BATHROOM,
-            "corredor": RoomType.HALLWAY,
-            "hallway": RoomType.HALLWAY,
-            "hall": RoomType.HALLWAY,
-            "varanda": RoomType.BALCONY,
-            "balcony": RoomType.BALCONY,
-            "terraço": RoomType.BALCONY,
-            "terrace": RoomType.BALCONY,
-            "exterior": RoomType.EXTERIOR,
-            "fachada": RoomType.EXTERIOR,
-            "garagem": RoomType.GARAGE,
-            "garage": RoomType.GARAGE,
-            "arrecadacao": RoomType.STORAGE,
-            "storage": RoomType.STORAGE,
-            "despensa": RoomType.STORAGE,
-        }
-        return mapping.get(room_type_str.lower(), RoomType.OTHER)
+        return GPT_ROOM_TYPE_MAP.get(room_type_str.lower(), RoomType.OTHER)
 
     async def classify_images(
         self,
@@ -319,7 +248,7 @@ class ImageClassifierService:
 
         Two-phase strategy:
         1. Tag phase (free): for each URL that has a known Apify tag, call
-           classify_from_tag(). These complete instantly with confidence=0.9.
+           classify_from_tag(). These complete instantly with TAG_CLASSIFICATION_CONFIDENCE.
         2. GPT phase (paid): URLs with no tag or an unknown tag are sent to
            classify_single_image() concurrently, respecting the semaphore.
 
@@ -432,7 +361,7 @@ class ImageClassifierService:
 
         Returns:
             List of RoomCluster objects. On any failure returns a single cluster
-            containing all images with confidence=0.3.
+            containing all images with FALLBACK_CONFIDENCE.
         """
         if len(image_urls) <= 1:
             return [
@@ -477,7 +406,7 @@ class ImageClassifierService:
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": content}],
-                    max_tokens=1000,
+                    max_tokens=self.openai_config.clustering_max_tokens,
                     response_format={"type": "json_object"},
                 )
 
@@ -493,7 +422,7 @@ class ImageClassifierService:
                     RoomCluster(
                         room_number=1,
                         image_indices=list(range(len(image_urls))),
-                        confidence=0.3,
+                        confidence=FALLBACK_CONFIDENCE,
                         visual_cues="",
                     )
                 ]
@@ -508,7 +437,7 @@ class ImageClassifierService:
                     RoomCluster(
                         room_number=1,
                         image_indices=list(range(len(image_urls))),
-                        confidence=0.3,
+                        confidence=FALLBACK_CONFIDENCE,
                         visual_cues="",
                     )
                 ]
@@ -538,7 +467,7 @@ class ImageClassifierService:
                     RoomCluster(
                         room_number=1,
                         image_indices=list(range(len(image_urls))),
-                        confidence=0.3,
+                        confidence=FALLBACK_CONFIDENCE,
                         visual_cues="",
                     )
                 ]
@@ -550,7 +479,7 @@ class ImageClassifierService:
                 RoomCluster(
                     room_number=1,
                     image_indices=list(range(len(image_urls))),
-                    confidence=0.3,
+                    confidence=FALLBACK_CONFIDENCE,
                     visual_cues="",
                 )
             ]
@@ -686,7 +615,7 @@ class ImageClassifierService:
                 RoomCluster(
                     room_number=i + 1,
                     image_indices=[i],
-                    confidence=0.3,
+                    confidence=FALLBACK_CONFIDENCE,
                     visual_cues="",
                 )
                 for i in range(num_images)
@@ -702,7 +631,7 @@ class ImageClassifierService:
                 RoomCluster(
                     room_number=room_num,
                     image_indices=list(range(idx, idx + size)),
-                    confidence=0.3,
+                    confidence=FALLBACK_CONFIDENCE,
                     visual_cues="",
                 )
             )
@@ -854,7 +783,10 @@ class ImageClassifierService:
 
 # Factory function for dependency injection
 def create_image_classifier(
-    openai_api_key: str, model: str = "gpt-4o-mini"
+    openai_api_key: str,
+    model: str = "gpt-4o-mini",
+    max_concurrent: int = 5,
+    openai_config: OpenAIConfig | None = None,
 ) -> ImageClassifierService:
     """Create an ImageClassifierService instance."""
-    return ImageClassifierService(openai_api_key, model)
+    return ImageClassifierService(openai_api_key, model, max_concurrent, openai_config)

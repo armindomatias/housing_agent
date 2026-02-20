@@ -8,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.image_downloader import MAX_IMAGES, ImageDownloaderService
+from app.config import ImageProcessingConfig
+from app.services.image_downloader import ImageDownloaderService
+
+MAX_IMAGES = ImageProcessingConfig().max_images_in_memory
 
 
 @pytest.fixture

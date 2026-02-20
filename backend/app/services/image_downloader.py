@@ -18,22 +18,10 @@ import base64
 import httpx
 import structlog
 
+from app.config import ImageProcessingConfig
+from app.constants import DEFAULT_IMAGE_CONTENT_TYPE, KNOWN_IMAGE_TYPES
+
 logger = structlog.get_logger(__name__)
-
-# Safety cap: never hold more than this many images in memory at once
-MAX_IMAGES = 25
-
-# Max concurrent downloads (bounded to avoid overwhelming the CDN)
-_SEMAPHORE_SLOTS = 10
-
-# Per-image download timeout in seconds
-_TIMEOUT_SECONDS = 10.0
-
-# Fallback content type when the CDN doesn't set a Content-Type header
-_DEFAULT_CONTENT_TYPE = "image/jpeg"
-
-# Content types we recognise; anything else gets the fallback label
-_KNOWN_TYPES: set[str] = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 class ImageDownloaderService:
@@ -44,12 +32,23 @@ class ImageDownloaderService:
     downstream OpenAI calls receive inline image data instead of external URLs.
     """
 
+    def __init__(self, config: ImageProcessingConfig | None = None):
+        """
+        Initialize the image downloader.
+
+        Args:
+            config: Image processing configuration (limits, timeouts, concurrency).
+                    Defaults to ImageProcessingConfig() with built-in defaults.
+        """
+        self.config = config or ImageProcessingConfig()
+
     async def download_images(self, urls: list[str]) -> dict[str, str]:
         """
         Download images concurrently and return a mapping of URL → base64 data URI.
 
-        Only the first MAX_IMAGES URLs are processed. Failed downloads are omitted
-        from the result — callers should fall back to the original URL in that case.
+        Only the first config.max_images_in_memory URLs are processed. Failed
+        downloads are omitted from the result — callers should fall back to the
+        original URL in that case.
 
         Args:
             urls: List of image URLs to download.
@@ -61,16 +60,17 @@ class ImageDownloaderService:
         if not urls:
             return {}
 
-        capped_urls = urls[:MAX_IMAGES]
-        if len(urls) > MAX_IMAGES:
+        max_images = self.config.max_images_in_memory
+        capped_urls = urls[:max_images]
+        if len(urls) > max_images:
             logger.warning(
                 "image_downloader_cap_exceeded",
                 total=len(urls),
-                cap=MAX_IMAGES,
+                cap=max_images,
             )
 
-        semaphore = asyncio.Semaphore(_SEMAPHORE_SLOTS)
-        timeout = httpx.Timeout(_TIMEOUT_SECONDS)
+        semaphore = asyncio.Semaphore(self.config.max_concurrent_downloads)
+        timeout = httpx.Timeout(self.config.download_timeout_seconds)
 
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             tasks = [self._fetch_one(client, semaphore, url) for url in capped_urls]
@@ -115,11 +115,11 @@ class ImageDownloaderService:
                 response = await client.get(url)
                 response.raise_for_status()
 
-                content_type = response.headers.get("content-type", _DEFAULT_CONTENT_TYPE)
+                content_type = response.headers.get("content-type", DEFAULT_IMAGE_CONTENT_TYPE)
                 # Strip parameters like "; charset=utf-8"
                 mime_type = content_type.split(";")[0].strip()
-                if mime_type not in _KNOWN_TYPES:
-                    mime_type = _DEFAULT_CONTENT_TYPE
+                if mime_type not in KNOWN_IMAGE_TYPES:
+                    mime_type = DEFAULT_IMAGE_CONTENT_TYPE
 
                 encoded = base64.b64encode(response.content).decode("ascii")
                 data_uri = f"data:{mime_type};base64,{encoded}"

@@ -24,6 +24,7 @@ import structlog
 from langgraph.graph import END, StateGraph
 
 from app.config import Settings
+from app.constants import PIPELINE_TOTAL_STEPS, SKIPPED_ROOM_TYPES
 from app.models.property import ImageClassification, RoomType, StreamEvent
 from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService, get_room_label
@@ -57,7 +58,7 @@ async def scrape_node(
             type="status",
             message="A obter dados do Idealista...",
             step=1,
-            total_steps=5,
+            total_steps=PIPELINE_TOTAL_STEPS,
         )
     )
 
@@ -70,7 +71,7 @@ async def scrape_node(
                 type="status",
                 message=f"Encontradas {num_images} fotografias",
                 step=1,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
                 data={"num_images": num_images, "title": property_data.title},
             )
         )
@@ -82,7 +83,7 @@ async def scrape_node(
                     type="status",
                     message="A descarregar fotografias...",
                     step=1,
-                    total_steps=5,
+                    total_steps=PIPELINE_TOTAL_STEPS,
                 )
             )
             image_data = await downloader.download_images(property_data.image_urls)
@@ -126,7 +127,7 @@ async def scrape_node(
                 type="error",
                 message=f"Erro ao obter dados: {str(e)}",
                 step=1,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
             )
         )
         return {
@@ -157,7 +158,7 @@ async def classify_node(
             type="status",
             message=f"A classificar {len(image_urls)} fotografias...",
             step=2,
-            total_steps=5,
+            total_steps=PIPELINE_TOTAL_STEPS,
         )
     )
 
@@ -183,7 +184,7 @@ async def classify_node(
                     type="progress",
                     message=f"A classificar foto {current}/{total}: {room_label} detectada ({source})",
                     step=2,
-                    total_steps=5,
+                    total_steps=PIPELINE_TOTAL_STEPS,
                     data={
                         "current": current,
                         "total": total,
@@ -214,7 +215,7 @@ async def classify_node(
                 type="status",
                 message=f"Divisões identificadas: {', '.join(summary_parts)}",
                 step=2,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
             )
         )
 
@@ -232,7 +233,7 @@ async def classify_node(
                 type="error",
                 message=f"Erro na classificação: {str(e)}",
                 step=2,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
             )
         )
         return {
@@ -263,7 +264,7 @@ async def group_node(
             type="status",
             message="A comparar fotografias para identificar divisões distintas...",
             step=3,
-            total_steps=5,
+            total_steps=PIPELINE_TOTAL_STEPS,
         )
     )
 
@@ -281,14 +282,13 @@ async def group_node(
     # Separate floor plan images, filter out exterior/other non-room images for estimation
     room_groups = {}
     floor_plan_urls: list[str] = []
-    skipped_types = [RoomType.EXTERIOR.value, RoomType.OTHER.value]
 
     for room_key, room_classifications in grouped.items():
         room_type = room_classifications[0].room_type.value
         if room_type == RoomType.FLOOR_PLAN.value:
             # Collect floor plan URLs for dedicated layout analysis
             floor_plan_urls.extend(c.image_url for c in room_classifications)
-        elif room_type not in skipped_types:
+        elif room_type not in SKIPPED_ROOM_TYPES:
             room_groups[room_key] = [
                 {
                     "image_url": c.image_url,
@@ -310,7 +310,7 @@ async def group_node(
             type="status",
             message="; ".join(msg_parts),
             step=3,
-            total_steps=5,
+            total_steps=PIPELINE_TOTAL_STEPS,
             data={"num_rooms": len(room_groups), "rooms": list(room_groups.keys())},
         )
     )
@@ -344,7 +344,7 @@ async def estimate_node(
             type="status",
             message=f"A analisar estado de {len(grouped_images)} divisões...",
             step=4,
-            total_steps=5,
+            total_steps=PIPELINE_TOTAL_STEPS,
         )
     )
 
@@ -376,7 +376,7 @@ async def estimate_node(
                         f"custo {analysis.cost_min:,.0f}€ - {analysis.cost_max:,.0f}€"
                     ),
                     step=4,
-                    total_steps=5,
+                    total_steps=PIPELINE_TOTAL_STEPS,
                     data={
                         "room": room_label,
                         "condition": analysis.condition.value,
@@ -397,7 +397,7 @@ async def estimate_node(
                     type="status",
                     message="A analisar planta do imóvel...",
                     step=4,
-                    total_steps=5,
+                    total_steps=PIPELINE_TOTAL_STEPS,
                 )
             )
             # Run room analyses and floor plan analysis concurrently
@@ -413,7 +413,7 @@ async def estimate_node(
                         type="status",
                         message=f"Encontradas {len(floor_plan_analysis.ideas)} ideias para otimização do espaço",
                         step=4,
-                        total_steps=5,
+                        total_steps=PIPELINE_TOTAL_STEPS,
                     )
                 )
         else:
@@ -428,7 +428,7 @@ async def estimate_node(
                 type="status",
                 message=f"Análise completa de {len(room_analyses)} divisões",
                 step=4,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
             )
         )
 
@@ -447,7 +447,7 @@ async def estimate_node(
                 type="error",
                 message=f"Erro na estimativa: {str(e)}",
                 step=4,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
             )
         )
         return {
@@ -478,7 +478,7 @@ async def summarize_node(
             type="status",
             message="A calcular custos finais...",
             step=5,
-            total_steps=5,
+            total_steps=PIPELINE_TOTAL_STEPS,
         )
     )
 
@@ -503,7 +503,7 @@ async def summarize_node(
                 type="result",
                 message=f"Estimativa completa: {total_min:,.0f}€ - {total_max:,.0f}€",
                 step=5,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
                 data={"estimate": estimate.model_dump()},
             )
         )
@@ -523,7 +523,7 @@ async def summarize_node(
                 type="error",
                 message=f"Erro ao gerar resumo: {str(e)}",
                 step=5,
-                total_steps=5,
+                total_steps=PIPELINE_TOTAL_STEPS,
             )
         )
         return {
