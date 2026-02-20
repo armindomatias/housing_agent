@@ -177,3 +177,45 @@ async def test_group_node_skips_on_error_state(
 
     mock_group.assert_not_called()
     assert result is error_state
+
+
+@pytest.mark.asyncio
+async def test_group_node_extracts_floor_plan_urls(
+    classifier: ImageClassifierService, base_state: dict
+):
+    """
+    FLOOR_PLAN images must end up in floor_plan_urls, not in grouped_images.
+
+    Regression test for: GPT returning 'planta' was silently dropped because
+    GPT_ROOM_TYPE_MAP was missing floor plan entries, causing FLOOR_PLAN images
+    to be misclassified as OTHER and skipped entirely.
+    """
+    floor_plan_classification = ImageClassification(
+        image_url="http://img/floor_plan.jpg",
+        room_type=RoomType.FLOOR_PLAN,
+        room_number=1,
+        confidence=0.9,
+    )
+    state_with_floor_plan = {
+        **base_state,
+        "classifications": [
+            *base_state["classifications"],
+            floor_plan_classification,
+        ],
+    }
+
+    fake_grouped = {
+        "cozinha_1": [base_state["classifications"][0]],
+        "quarto_1": [base_state["classifications"][1]],
+        "planta_1": [floor_plan_classification],
+    }
+
+    with patch.object(
+        classifier, "group_by_room", new_callable=AsyncMock, return_value=fake_grouped
+    ):
+        result = await group_node(state_with_floor_plan, classifier_service=classifier)
+
+    # Floor plan URL must be collected in floor_plan_urls
+    assert "http://img/floor_plan.jpg" in result["floor_plan_urls"]
+    # Floor plan must NOT be treated as a renovation room
+    assert "planta_1" not in result["grouped_images"]

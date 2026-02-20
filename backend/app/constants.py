@@ -70,6 +70,10 @@ APIFY_TAG_MAP: dict[str, RoomType] = {
     "planta": RoomType.FLOOR_PLAN,
     "floor_plan": RoomType.FLOOR_PLAN,
     "floorplan": RoomType.FLOOR_PLAN,
+    "floor-plan": RoomType.FLOOR_PLAN,
+    "plan": RoomType.FLOOR_PLAN,
+    "plans": RoomType.FLOOR_PLAN,
+    "planimetria": RoomType.FLOOR_PLAN,
 }
 
 # --- GPT response room type mapping ---
@@ -100,6 +104,12 @@ GPT_ROOM_TYPE_MAP: dict[str, RoomType] = {
     "arrecadacao": RoomType.STORAGE,
     "storage": RoomType.STORAGE,
     "despensa": RoomType.STORAGE,
+    "planta": RoomType.FLOOR_PLAN,
+    "floor_plan": RoomType.FLOOR_PLAN,
+    "floor plan": RoomType.FLOOR_PLAN,
+    "floorplan": RoomType.FLOOR_PLAN,
+    "outro": RoomType.OTHER,
+    "other": RoomType.OTHER,
 }
 
 # --- Room type labels (Portuguese) ---

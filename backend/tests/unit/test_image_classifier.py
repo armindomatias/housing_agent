@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.constants import GPT_ROOM_TYPE_MAP
 from app.models.property import ImageClassification, RoomCluster, RoomType
+from app.prompts.renovation import IMAGE_CLASSIFICATION_PROMPT
 from app.services.image_classifier import (
     ImageClassifierService,
     classify_from_tag,
@@ -78,6 +80,57 @@ class TestMapRoomType:
     def test_case_insensitive(self, classifier: ImageClassifierService):
         assert classifier._map_room_type("COZINHA") == RoomType.KITCHEN
         assert classifier._map_room_type("Sala") == RoomType.LIVING_ROOM
+
+    def test_maps_floor_plan_variants(self, classifier: ImageClassifierService):
+        """All GPT floor plan response variants must map to FLOOR_PLAN (regression guard)."""
+        for variant in ("planta", "floor_plan", "floor plan", "floorplan"):
+            assert classifier._map_room_type(variant) == RoomType.FLOOR_PLAN, (
+                f"Expected FLOOR_PLAN for {variant!r}, got {classifier._map_room_type(variant)}"
+            )
+
+    def test_maps_outro_and_other_explicitly(self, classifier: ImageClassifierService):
+        """'outro' and 'other' must explicitly map to OTHER (not just fall through the default)."""
+        assert classifier._map_room_type("outro") == RoomType.OTHER
+        assert classifier._map_room_type("other") == RoomType.OTHER
+
+
+class TestGPTMapPromptCoverage:
+    """
+    Regression guard: every room type listed in IMAGE_CLASSIFICATION_PROMPT must
+    have at least one entry in GPT_ROOM_TYPE_MAP, so future prompt changes that add
+    a new room type cannot silently break the classification pipeline.
+    """
+
+    def _parse_prompt_room_types(self) -> list[str]:
+        """Extract the leading keys from the prompt's TIPOS DE DIVISÃO VÁLIDOS block."""
+        room_types: list[str] = []
+        in_block = False
+        for line in IMAGE_CLASSIFICATION_PROMPT.splitlines():
+            if "TIPOS DE DIVISÃO VÁLIDOS" in line:
+                in_block = True
+                continue
+            if in_block:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("-"):
+                    # Format: "- cozinha: Cozinha"
+                    key = stripped.lstrip("- ").split(":")[0].strip()
+                    room_types.append(key)
+                elif stripped.startswith("Responde"):
+                    break
+        return room_types
+
+    def test_all_prompt_room_types_in_gpt_map(self):
+        """Every room type key in the prompt must be mapped in GPT_ROOM_TYPE_MAP."""
+        prompt_types = self._parse_prompt_room_types()
+        assert prompt_types, "Failed to parse any room types from the prompt — check parser logic"
+
+        missing = [rt for rt in prompt_types if rt not in GPT_ROOM_TYPE_MAP]
+        assert not missing, (
+            f"Prompt room types not in GPT_ROOM_TYPE_MAP: {missing}. "
+            "Add entries to backend/app/constants.py → GPT_ROOM_TYPE_MAP."
+        )
 
 
 class TestGroupByRoom:

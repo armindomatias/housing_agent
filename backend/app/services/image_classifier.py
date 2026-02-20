@@ -235,7 +235,16 @@ class ImageClassifierService:
         Returns:
             Corresponding RoomType enum value
         """
-        return GPT_ROOM_TYPE_MAP.get(room_type_str.lower(), RoomType.OTHER)
+        normalised = room_type_str.lower()
+        room_type = GPT_ROOM_TYPE_MAP.get(normalised)
+        if room_type is None:
+            logger.warning(
+                "gpt_room_type_unmapped",
+                raw_value=room_type_str,
+                detail="Add entry to GPT_ROOM_TYPE_MAP in constants.py to fix silently dropped images",
+            )
+            return RoomType.OTHER
+        return room_type
 
     async def classify_images(
         self,
