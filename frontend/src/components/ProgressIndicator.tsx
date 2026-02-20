@@ -1,21 +1,13 @@
 "use client";
 
 import type { StreamEvent } from "@/types/analysis";
+import { MAX_RECENT_EVENTS, STEP_LABELS } from "@/lib/config";
 
 interface ProgressIndicatorProps {
   events: StreamEvent[];
   currentStep: number;
   totalSteps: number;
 }
-
-const STEP_LABELS = [
-  "Iniciar",
-  "Obter dados",
-  "Classificar fotos",
-  "Agrupar divisões",
-  "Estimar custos",
-  "Finalizar",
-];
 
 /**
  * Progress indicator showing real-time analysis progress.
@@ -28,8 +20,8 @@ export function ProgressIndicator({
 }: ProgressIndicatorProps) {
   const progressPercent = (currentStep / totalSteps) * 100;
 
-  // Get only the last 5 events for display
-  const recentEvents = events.slice(-5);
+  // Get only the last MAX_RECENT_EVENTS events for display
+  const recentEvents = events.slice(-MAX_RECENT_EVENTS);
 
   return (
     <div className="w-full max-w-2xl space-y-4">

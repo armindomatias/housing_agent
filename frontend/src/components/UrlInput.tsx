@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
+import { IDEALISTA_DOMAIN, IDEALISTA_PATH_SEGMENT } from "@/lib/config";
 
 interface UrlInputProps {
   onSubmit: (url: string) => void;
@@ -18,11 +19,11 @@ export function UrlInput({ onSubmit, isLoading }: UrlInputProps) {
   const validateUrl = (value: string): boolean => {
     try {
       const urlObj = new URL(value);
-      if (!urlObj.hostname.includes("idealista.pt")) {
+      if (!urlObj.hostname.includes(IDEALISTA_DOMAIN)) {
         setError("O URL deve ser do Idealista Portugal (idealista.pt)");
         return false;
       }
-      if (!urlObj.pathname.includes("/imovel/")) {
+      if (!urlObj.pathname.includes(IDEALISTA_PATH_SEGMENT)) {
         setError("O URL deve ser de um anúncio específico (/imovel/...)");
         return false;
       }

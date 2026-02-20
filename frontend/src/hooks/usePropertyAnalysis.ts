@@ -2,8 +2,13 @@
 
 import { useState, useCallback } from "react";
 import type { StreamEvent, RenovationEstimate } from "@/types/analysis";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import {
+  API_BASE_URL,
+  API_ANALYZE_PATH,
+  DEFAULT_TOTAL_STEPS,
+  SSE_DATA_PREFIX,
+  SSE_DATA_PREFIX_LENGTH,
+} from "@/lib/config";
 
 interface UsePropertyAnalysisResult {
   isAnalyzing: boolean;
@@ -32,7 +37,7 @@ export function usePropertyAnalysis(): UsePropertyAnalysisResult {
   const [result, setResult] = useState<RenovationEstimate | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
-  const [totalSteps, setTotalSteps] = useState(5);
+  const [totalSteps, setTotalSteps] = useState(DEFAULT_TOTAL_STEPS);
 
   const reset = useCallback(() => {
     setIsAnalyzing(false);
@@ -52,7 +57,7 @@ export function usePropertyAnalysis(): UsePropertyAnalysisResult {
 
     try {
       // Create SSE connection via fetch with POST
-      const response = await fetch(`${API_URL}/api/v1/analyze`, {
+      const response = await fetch(`${API_BASE_URL}${API_ANALYZE_PATH}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -88,8 +93,8 @@ export function usePropertyAnalysis(): UsePropertyAnalysisResult {
 
         for (const line of lines) {
           // SSE format: "data: {...json...}"
-          if (line.startsWith("data: ")) {
-            const jsonStr = line.slice(6).trim();
+          if (line.startsWith(SSE_DATA_PREFIX)) {
+            const jsonStr = line.slice(SSE_DATA_PREFIX_LENGTH).trim();
             if (jsonStr) {
               try {
                 const event: StreamEvent = JSON.parse(jsonStr);

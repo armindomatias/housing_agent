@@ -1,6 +1,7 @@
 "use client";
 
 import type { RenovationEstimate, RoomAnalysis } from "@/types/analysis";
+import { LOCALE, CURRENCY, MAX_HERO_IMAGES, MIN_UNIQUE_HERO_IMAGES } from "@/lib/config";
 
 interface ResultsDisplayProps {
   estimate: RenovationEstimate;
@@ -22,9 +23,9 @@ const priorityLabels: Record<string, { label: string; color: string }> = {
 };
 
 function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("pt-PT", {
+  return new Intl.NumberFormat(LOCALE, {
     style: "currency",
-    currency: "EUR",
+    currency: CURRENCY,
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
@@ -121,8 +122,8 @@ export function ResultsDisplay({ estimate, onReset }: ResultsDisplayProps) {
     const general = estimate.property_data.image_urls.filter(
       (url) => !usedUrls.has(url)
     );
-    const candidates = general.length >= 2 ? general : estimate.property_data.image_urls;
-    return candidates.slice(0, 2);
+    const candidates = general.length >= MIN_UNIQUE_HERO_IMAGES ? general : estimate.property_data.image_urls;
+    return candidates.slice(0, MAX_HERO_IMAGES);
   })();
 
   return (
