@@ -9,6 +9,7 @@ import {
   SSE_DATA_PREFIX,
   SSE_DATA_PREFIX_LENGTH,
 } from "@/lib/config";
+import { createClient } from "@/lib/supabase/client";
 
 interface UsePropertyAnalysisResult {
   isAnalyzing: boolean;
@@ -56,12 +57,18 @@ export function usePropertyAnalysis(): UsePropertyAnalysisResult {
     setCurrentStep(0);
 
     try {
+      // Get auth token
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       // Create SSE connection via fetch with POST
       const response = await fetch(`${API_BASE_URL}${API_ANALYZE_PATH}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ url }),
       });

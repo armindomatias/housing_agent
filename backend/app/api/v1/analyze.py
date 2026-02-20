@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl
 from sse_starlette.sse import EventSourceResponse
 
+from app.auth import CurrentUser
 from app.graphs.state import create_initial_state
 from app.models.property import RenovationEstimate
 
@@ -30,7 +31,6 @@ class AnalyzeRequest(BaseModel):
     """Request body for property analysis."""
 
     url: HttpUrl = Field(description="Idealista listing URL")
-    user_id: str = Field(default="", description="Optional user ID for tracking")
 
 
 class AnalyzeResponse(BaseModel):
@@ -103,6 +103,7 @@ async def stream_analysis(
 async def analyze_property_stream(
     body: AnalyzeRequest,
     request: Request,
+    user: CurrentUser,
 ) -> EventSourceResponse:
     """
     Analyze a property with streaming progress updates.
@@ -120,13 +121,14 @@ async def analyze_property_stream(
     ```
     curl -N -X POST http://localhost:8000/api/v1/analyze \
       -H "Content-Type: application/json" \
+      -H "Authorization: Bearer <token>" \
       -d '{"url": "https://www.idealista.pt/imovel/12345678/"}'
     ```
     """
-    structlog.contextvars.bind_contextvars(property_url=str(body.url))
+    structlog.contextvars.bind_contextvars(property_url=str(body.url), user_id=user.id)
     graph = request.app.state.graph
     return EventSourceResponse(
-        stream_analysis(str(body.url), body.user_id, graph),
+        stream_analysis(str(body.url), user.id, graph),
         media_type="text/event-stream",
     )
 
@@ -135,6 +137,7 @@ async def analyze_property_stream(
 async def analyze_property_sync(
     body: AnalyzeRequest,
     request: Request,
+    user: CurrentUser,
 ) -> AnalyzeResponse:
     """
     Analyze a property without streaming (simpler but no progress updates).
@@ -145,9 +148,9 @@ async def analyze_property_sync(
     Returns the complete RenovationEstimate or an error message.
     """
     try:
-        structlog.contextvars.bind_contextvars(property_url=str(body.url))
+        structlog.contextvars.bind_contextvars(property_url=str(body.url), user_id=user.id)
         graph = request.app.state.graph
-        initial_state = create_initial_state(str(body.url), body.user_id)
+        initial_state = create_initial_state(str(body.url), user.id)
 
         final_state = await graph.ainvoke(initial_state)
 

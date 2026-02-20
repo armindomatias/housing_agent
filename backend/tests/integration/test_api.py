@@ -58,3 +58,28 @@ class TestRequestContextMiddleware:
         r1 = client.get("/health")
         r2 = client.get("/health")
         assert r1.headers["x-request-id"] != r2.headers["x-request-id"]
+
+
+class TestAuthProtection:
+    """Tests verifying that analyze endpoints require authentication."""
+
+    def test_analyze_without_token_returns_401(self, client: TestClient):
+        """POST /api/v1/analyze without a Bearer token returns 401."""
+        response = client.post(
+            "/api/v1/analyze",
+            json={"url": "https://www.idealista.pt/imovel/12345678/"},
+        )
+        assert response.status_code == 401
+
+    def test_analyze_sync_without_token_returns_401(self, client: TestClient):
+        """POST /api/v1/analyze/sync without a Bearer token returns 401."""
+        response = client.post(
+            "/api/v1/analyze/sync",
+            json={"url": "https://www.idealista.pt/imovel/12345678/"},
+        )
+        assert response.status_code == 401
+
+    def test_health_endpoints_no_auth_required(self, client: TestClient):
+        """Health check endpoints remain public (no auth required)."""
+        assert client.get("/health").status_code == 200
+        assert client.get("/api/v1/analyze/health").status_code == 200

@@ -6,14 +6,15 @@ import { IDEALISTA_DOMAIN, IDEALISTA_PATH_SEGMENT } from "@/lib/config";
 interface UrlInputProps {
   onSubmit: (url: string) => void;
   isLoading: boolean;
+  defaultValue?: string;
 }
 
 /**
  * URL input component for Idealista property URLs.
  * Validates that the URL is a valid Idealista listing.
  */
-export function UrlInput({ onSubmit, isLoading }: UrlInputProps) {
-  const [url, setUrl] = useState("");
+export function UrlInput({ onSubmit, isLoading, defaultValue = "" }: UrlInputProps) {
+  const [url, setUrl] = useState(defaultValue);
   const [error, setError] = useState("");
 
   const validateUrl = (value: string): boolean => {

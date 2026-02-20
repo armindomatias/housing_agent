@@ -34,3 +34,11 @@ export const IDEALISTA_PATH_SEGMENT = "/imovel/";
 // --- SSE parsing ---
 export const SSE_DATA_PREFIX = "data: ";
 export const SSE_DATA_PREFIX_LENGTH = SSE_DATA_PREFIX.length;
+
+// --- Supabase ---
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+// --- Auth routes ---
+export const AUTH_PAGE_PATH = "/auth";
+export const AUTH_CALLBACK_PATH = "/auth/callback";

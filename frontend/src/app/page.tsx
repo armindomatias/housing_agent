@@ -1,11 +1,19 @@
 "use client";
 
+import { useRouter, useSearchParams } from "next/navigation";
 import { UrlInput } from "@/components/UrlInput";
 import { ProgressIndicator } from "@/components/ProgressIndicator";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
 import { usePropertyAnalysis } from "@/hooks/usePropertyAnalysis";
+import { useAuth } from "@/hooks/useAuth";
+import { AUTH_PAGE_PATH } from "@/lib/config";
 
 export default function Home() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillUrl = searchParams.get("url") || "";
+
+  const { user, loading: authLoading, signOut } = useAuth();
   const {
     isAnalyzing,
     events,
@@ -17,11 +25,46 @@ export default function Home() {
     reset,
   } = usePropertyAnalysis();
 
+  const handleAnalyze = (url: string) => {
+    if (!user) {
+      router.push(
+        `${AUTH_PAGE_PATH}?redirect=/&url=${encodeURIComponent(url)}`
+      );
+      return;
+    }
+    analyze(url);
+  };
+
   return (
     <main className="min-h-screen py-12 px-4">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <header className="text-center mb-12">
+        <header className="text-center mb-12 relative">
+          {/* User info (top-right) */}
+          {!authLoading && user && (
+            <div className="absolute right-0 top-0 flex items-center gap-3">
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {user.email}
+              </span>
+              <button
+                onClick={signOut}
+                className="text-sm px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              >
+                Sair
+              </button>
+            </div>
+          )}
+          {!authLoading && !user && (
+            <div className="absolute right-0 top-0">
+              <button
+                onClick={() => router.push(AUTH_PAGE_PATH)}
+                className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Entrar
+              </button>
+            </div>
+          )}
+
           <h1 className="text-4xl font-bold mb-4">Rehabify</h1>
           <p className="text-xl text-gray-600 dark:text-gray-400">
             Estimativa de custos de remodelação para imóveis em Portugal
@@ -33,7 +76,11 @@ export default function Home() {
           {/* Show URL input if not analyzing and no result */}
           {!isAnalyzing && !result && (
             <>
-              <UrlInput onSubmit={analyze} isLoading={isAnalyzing} />
+              <UrlInput
+                onSubmit={handleAnalyze}
+                isLoading={isAnalyzing}
+                defaultValue={prefillUrl}
+              />
 
               {/* Show error if exists */}
               {error && (

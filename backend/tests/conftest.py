@@ -23,6 +23,9 @@ def _set_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APIFY_TOKEN", "apify-test-fake-token")
     # Disable LangSmith tracing in tests
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    # Supabase (not configured in test environment)
+    monkeypatch.setenv("SUPABASE_URL", "")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
 
 @pytest.fixture(autouse=True)

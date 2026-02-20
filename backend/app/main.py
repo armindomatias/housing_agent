@@ -16,6 +16,8 @@ from typing import AsyncGenerator
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from supabase import acreate_client
+from supabase._async.client import AsyncClient as AsyncSupabaseClient
 
 from app.api.v1.analyze import router as analyze_router
 from app.config import get_settings
@@ -59,6 +61,22 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning("apify_token_missing", detail="Using mock data for Idealista scraping")
     else:
         logger.info("apify_configured")
+
+    # Initialize Supabase async client
+    supabase_client: AsyncSupabaseClient | None = None
+    if settings.supabase_url and settings.supabase_service_role_key:
+        try:
+            supabase_client = await acreate_client(
+                settings.supabase_url,
+                settings.supabase_service_role_key,
+            )
+            logger.info("supabase_configured")
+        except Exception as e:
+            logger.warning("supabase_init_failed", error=str(e))
+    else:
+        logger.warning("supabase_not_configured", detail="Auth endpoints will return 503")
+
+    _app.state.supabase = supabase_client
 
     # Create services once at startup
     idealista_service = IdealistaService(settings.apify_token, settings.apify)
