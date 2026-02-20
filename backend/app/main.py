@@ -64,11 +64,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Initialize Supabase async client
     supabase_client: AsyncSupabaseClient | None = None
-    if settings.supabase_url and settings.supabase_service_role_key:
+    if settings.supabase_url and settings.supabase_secret_key:
         try:
             supabase_client = await acreate_client(
                 settings.supabase_url,
-                settings.supabase_service_role_key,
+                settings.supabase_secret_key,
             )
             logger.info("supabase_configured")
         except Exception as e:

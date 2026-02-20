@@ -37,7 +37,7 @@ export const SSE_DATA_PREFIX_LENGTH = SSE_DATA_PREFIX.length;
 
 // --- Supabase ---
 export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+export const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
 
 // --- Auth routes ---
 export const AUTH_PAGE_PATH = "/auth";

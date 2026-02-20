@@ -25,7 +25,7 @@ def _set_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
     # Supabase (not configured in test environment)
     monkeypatch.setenv("SUPABASE_URL", "")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "")
 
 
 @pytest.fixture(autouse=True)
