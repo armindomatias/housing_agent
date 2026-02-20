@@ -22,13 +22,7 @@ TIPOS DE DIVISÃO VÁLIDOS:
 - garagem: Garagem
 - arrecadacao: Arrecadação/Despensa
 - planta: Planta/Desenho técnico do imóvel
-- outro: Imagem genuinamente não identificável (logótipo, gráfico, detalhe decorativo extremo)
-
-REGRAS IMPORTANTES:
-- Espaços mistos: Para espaços mistos (ex: sala com zona de jantar, quarto com escritório), classifica como o tipo DOMINANTE da divisão. Uma sala de estar com zona de refeições é "sala". Um quarto usado como escritório é "quarto".
-- Mau estado: Se a divisão estiver em mau estado mas for reconhecível como um tipo específico (ex: cozinha degradada), classifica como esse tipo. O estado mau não é razão para classificar como "outro".
-- Espaço habitável ambíguo: Se o espaço é claramente uma divisão habitável mas não consegues determinar o tipo exato, classifica como "sala" (a opção mais comum/versátil) com confiança reduzida.
-- Usa "outro" APENAS para imagens que NÃO mostram uma divisão (ex: logótipos, gráficos de marketing, fotografias de detalhes decorativos isolados).
+- outro: Não identificável ou espaço misto
 
 Responde APENAS em JSON com este formato exato:
 {
