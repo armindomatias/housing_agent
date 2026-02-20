@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.property import RoomCondition, RoomType
+from app.models.property import FloorPlanAnalysis, RoomCondition, RoomType
 from app.services.renovation_estimator import RenovationEstimatorService  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -345,3 +345,141 @@ class TestGenerateSummary:
 
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# TestAnalyzeFloorPlan
+# ---------------------------------------------------------------------------
+
+
+def _floor_plan_response_json(
+    ideas: list[dict] | None = None,
+    property_context: str = "T2 com 75m², layout tradicional",
+    confidence: float = 0.8,
+) -> str:
+    if ideas is None:
+        ideas = [
+            {
+                "title": "Abrir cozinha para a sala",
+                "description": "Remover parede entre cozinha e sala para conceito open-plan.",
+                "potential_impact": "Maior luminosidade e sensação de espaço",
+                "estimated_complexity": "media",
+            }
+        ]
+    return json.dumps(
+        {"ideas": ideas, "property_context": property_context, "confidence": confidence}
+    )
+
+
+class TestAnalyzeFloorPlan:
+    """Tests for RenovationEstimatorService.analyze_floor_plan()."""
+
+    @pytest.mark.asyncio
+    async def test_returns_floor_plan_analysis_with_ideas(
+        self, estimator: RenovationEstimatorService
+    ):
+        """Valid JSON response is parsed into a FloorPlanAnalysis with ideas."""
+        mock_resp = _make_mock_response(content=_floor_plan_response_json())
+
+        with patch.object(
+            estimator.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ):
+            result = await estimator.analyze_floor_plan(["http://img/planta.jpg"])
+
+        assert isinstance(result, FloorPlanAnalysis)
+        assert len(result.ideas) == 1
+        assert result.ideas[0].title == "Abrir cozinha para a sala"
+        assert result.ideas[0].estimated_complexity == "media"
+        assert result.confidence == 0.8
+        assert result.images == ["http://img/planta.jpg"]
+
+    @pytest.mark.asyncio
+    async def test_failure_returns_none(self, estimator: RenovationEstimatorService):
+        """Any exception during floor plan analysis returns None gracefully."""
+        with patch.object(
+            estimator.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=Exception("API error"),
+        ):
+            result = await estimator.analyze_floor_plan(["http://img/planta.jpg"])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_urls_returns_none(self, estimator: RenovationEstimatorService):
+        """Empty image list returns None without making any API call."""
+        with patch.object(
+            estimator.client.chat.completions, "create", new_callable=AsyncMock
+        ) as mock_create:
+            result = await estimator.analyze_floor_plan([])
+
+        mock_create.assert_not_called()
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_refusal_returns_none(self, estimator: RenovationEstimatorService):
+        """OpenAI refusal returns None without crashing."""
+        mock_resp = _make_mock_response(refusal="Cannot analyse this content")
+
+        with patch.object(
+            estimator.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ):
+            result = await estimator.analyze_floor_plan(["http://img/planta.jpg"])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_null_content_returns_none(self, estimator: RenovationEstimatorService):
+        """Null content response returns None gracefully."""
+        mock_resp = _make_mock_response(content=None)
+
+        with patch.object(
+            estimator.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ):
+            result = await estimator.analyze_floor_plan(["http://img/planta.jpg"])
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_property_context_included_in_prompt(
+        self, estimator: RenovationEstimatorService
+    ):
+        """When property_data is provided, context is included in the API request."""
+        from app.models.property import PropertyData
+
+        mock_resp = _make_mock_response(content=_floor_plan_response_json())
+        captured: list[dict] = []
+
+        async def _capture(**kwargs):
+            captured.append(kwargs)
+            return mock_resp
+
+        property_data = PropertyData(
+            url="https://www.idealista.pt/imovel/12345678/",
+            num_rooms=2,
+            area_m2=75.0,
+            price=185000.0,
+        )
+
+        with patch.object(
+            estimator.client.chat.completions, "create", side_effect=_capture
+        ):
+            await estimator.analyze_floor_plan(
+                ["http://img/planta.jpg"], property_data=property_data
+            )
+
+        assert len(captured) == 1
+        content = captured[0]["messages"][0]["content"]
+        text_block = next(b for b in content if b["type"] == "text")
+        assert "T2" in text_block["text"]
+        assert "75" in text_block["text"]

@@ -154,6 +154,32 @@ class TestGetRoomLabel:
             assert len(label) > 0
 
 
+class TestFloorPlanTagMapping:
+    """Tests for floor plan tag mappings and label (plan steps 10 & 3)."""
+
+    def test_planta_tag_maps_to_floor_plan(self):
+        result = classify_from_tag("http://img/planta.jpg", "planta")
+        assert result is not None
+        assert result.room_type == RoomType.FLOOR_PLAN
+
+    def test_floor_plan_english_aliases(self):
+        assert classify_from_tag("u", "floor_plan").room_type == RoomType.FLOOR_PLAN
+        assert classify_from_tag("u", "floorplan").room_type == RoomType.FLOOR_PLAN
+
+    def test_floor_plan_label(self):
+        assert get_room_label(RoomType.FLOOR_PLAN, 1) == "Planta"
+
+    def test_floor_plan_tag_confidence(self):
+        result = classify_from_tag("u", "planta")
+        assert result is not None
+        assert result.confidence == 0.9
+
+    def test_floor_plan_tag_case_insensitive(self):
+        result = classify_from_tag("u", "PLANTA")
+        assert result is not None
+        assert result.room_type == RoomType.FLOOR_PLAN
+
+
 class TestClassifyFromTag:
     """
     Tests for the standalone classify_from_tag() function (Branch 2).

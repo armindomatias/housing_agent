@@ -21,6 +21,7 @@ class RoomType(str, Enum):
     EXTERIOR = "exterior"
     GARAGE = "garagem"
     STORAGE = "arrecadacao"
+    FLOOR_PLAN = "planta"
     OTHER = "outro"
 
 
@@ -58,6 +59,36 @@ class ClusteringResult(BaseModel):
     clusters: list[RoomCluster] = Field(description="List of room clusters")
     total_rooms: int = Field(ge=1, description="Total number of distinct rooms found")
     reasoning: str = Field(default="", description="Overall reasoning")
+
+
+class FloorPlanIdea(BaseModel):
+    """A single layout optimisation idea derived from a floor plan image."""
+
+    title: str = Field(description="Short descriptive title, e.g. 'Abrir cozinha para a sala'")
+    description: str = Field(description="Detailed explanation of the idea (2-3 sentences)")
+    potential_impact: str = Field(
+        description="Expected impact, e.g. 'Maior luminosidade e sensação de espaço'"
+    )
+    estimated_complexity: str = Field(
+        description="Estimated complexity: 'baixa', 'media', or 'alta'"
+    )
+
+
+class FloorPlanAnalysis(BaseModel):
+    """Result of analysing floor plan image(s) for layout optimisation ideas."""
+
+    images: list[str] = Field(
+        default_factory=list, description="URLs of floor plan images analysed"
+    )
+    ideas: list[FloorPlanIdea] = Field(
+        default_factory=list, description="Layout optimisation ideas"
+    )
+    property_context: str = Field(
+        default="", description="Brief description of current layout, e.g. 'T2 com 75m²'"
+    )
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="Confidence based on quality/clarity of the floor plan"
+    )
 
 
 class RenovationItem(BaseModel):
@@ -146,6 +177,9 @@ class RenovationEstimate(BaseModel):
         ge=0.0, le=1.0, description="Overall confidence in estimate"
     )
     summary: str = Field(default="", description="Summary of renovation needs")
+    floor_plan_ideas: FloorPlanAnalysis | None = Field(
+        default=None, description="Layout optimisation ideas from floor plan analysis"
+    )
     disclaimer: str = Field(
         default=(
             "A Rehabify fornece estimativas indicativas baseadas em análise automatizada. "

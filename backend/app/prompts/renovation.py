@@ -21,6 +21,7 @@ TIPOS DE DIVISÃO VÁLIDOS:
 - exterior: Vista exterior do edifício/fachada
 - garagem: Garagem
 - arrecadacao: Arrecadação/Despensa
+- planta: Planta/Desenho técnico do imóvel
 - outro: Não identificável ou espaço misto
 
 Responde APENAS em JSON com este formato exato:
@@ -143,6 +144,45 @@ IMPORTANTE:
 - room_number começa em 1 e incrementa sequencialmente
 - confidence entre 0.0 e 1.0 (quanto mais certeza na separação, mais alto)
 - Se todas as fotografias parecem mostrar a MESMA divisão, devolve um único cluster"""
+
+
+# Prompt for analysing floor plan images and generating layout optimisation ideas
+FLOOR_PLAN_ANALYSIS_PROMPT = """És um especialista em design de interiores e arquitetura em Portugal. Analisa esta planta de um imóvel e sugere ideias criativas para otimizar o layout.
+
+{property_context}INSTRUÇÕES:
+1. Analisa a distribuição atual dos espaços na planta
+2. Identifica oportunidades para melhorar o layout
+3. Sugere 2-4 ideias criativas (não mais) para otimizar o espaço
+4. Considera tendências modernas de design de interiores em Portugal
+5. As sugestões são ideias, não recomendações — o utilizador deve consultar um profissional
+
+CONSIDERA:
+- Abrir espaços para conceito open-plan (cozinha-sala)
+- Otimização de corredores e zonas de circulação
+- Conversão de divisões para usos mais funcionais
+- Aproveitamento de zonas mal utilizadas
+- Melhoria da luminosidade natural
+
+Responde APENAS em JSON com este formato:
+{{
+    "ideas": [
+        {{
+            "title": "Título curto e descritivo",
+            "description": "Descrição detalhada da ideia (2-3 frases)",
+            "potential_impact": "Impacto esperado na qualidade de vida ou valor do imóvel",
+            "estimated_complexity": "baixa"
+        }}
+    ],
+    "property_context": "Breve descrição do layout atual (ex: T2 com 75m², layout tradicional)",
+    "confidence": 0.8
+}}
+
+NOTAS:
+- estimated_complexity deve ser "baixa", "media" ou "alta"
+- confidence entre 0.0 e 1.0 (baseado na qualidade/clareza da planta)
+- Máximo 4 ideias — qualidade sobre quantidade
+- Sê criativo mas realista para o mercado português
+- Lembra: são SUGESTÕES, o utilizador deve consultar um profissional"""
 
 
 # Prompt for generating a final summary of all renovation needs

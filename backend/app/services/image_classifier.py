@@ -74,6 +74,7 @@ def get_room_label(room_type: RoomType, room_number: int) -> str:
         RoomType.EXTERIOR: "Exterior",
         RoomType.GARAGE: "Garagem",
         RoomType.STORAGE: "Arrecadação",
+        RoomType.FLOOR_PLAN: "Planta",
         RoomType.OTHER: "Outro",
     }
 
@@ -120,6 +121,9 @@ _APIFY_TAG_MAP: dict[str, RoomType] = {
     "laundry": RoomType.STORAGE,
     "office": RoomType.OTHER,
     "pool": RoomType.EXTERIOR,
+    "planta": RoomType.FLOOR_PLAN,
+    "floor_plan": RoomType.FLOOR_PLAN,
+    "floorplan": RoomType.FLOOR_PLAN,
 }
 
 

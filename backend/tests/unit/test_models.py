@@ -25,13 +25,13 @@ class TestRoomType:
     def test_all_room_types_have_portuguese_values(self):
         expected_values = {
             "cozinha", "sala", "quarto", "casa_de_banho", "corredor",
-            "varanda", "exterior", "garagem", "arrecadacao", "outro",
+            "varanda", "exterior", "garagem", "arrecadacao", "planta", "outro",
         }
         actual_values = {rt.value for rt in RoomType}
         assert actual_values == expected_values
 
     def test_room_type_count(self):
-        assert len(RoomType) == 10
+        assert len(RoomType) == 11
 
 
 class TestRoomCondition:

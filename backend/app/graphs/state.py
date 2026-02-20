@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.models.property import (
+    FloorPlanAnalysis,
     ImageClassification,
     PropertyData,
     RenovationEstimate,
@@ -55,11 +56,17 @@ class PropertyState(BaseModel):
     grouped_images: dict[str, list[dict[str, Any]]] = Field(
         default_factory=dict, description="Images grouped by room"
     )
+    floor_plan_urls: list[str] = Field(
+        default_factory=list, description="Floor plan image URLs extracted during grouping"
+    )
 
     # === ESTIMATION RESULTS ===
     # Filled by the 'estimate' node
     room_analyses: list[RoomAnalysis] = Field(
         default_factory=list, description="Analysis and cost estimate for each room"
+    )
+    floor_plan_analysis: FloorPlanAnalysis | None = Field(
+        default=None, description="Layout optimisation ideas from floor plan analysis"
     )
 
     # === FINAL OUTPUT ===
@@ -104,7 +111,9 @@ def create_initial_state(url: str, user_id: str = "") -> dict[str, Any]:
         "image_urls": [],
         "classifications": [],
         "grouped_images": {},
+        "floor_plan_urls": [],
         "room_analyses": [],
+        "floor_plan_analysis": None,
         "estimate": None,
         "summary": "",
         "stream_events": [],

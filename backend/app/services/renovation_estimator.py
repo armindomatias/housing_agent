@@ -29,6 +29,8 @@ import json
 import structlog
 
 from app.models.property import (
+    FloorPlanAnalysis,
+    FloorPlanIdea,
     ImageClassification,
     PropertyData,
     RenovationEstimate,
@@ -37,7 +39,7 @@ from app.models.property import (
     RoomCondition,
     RoomType,
 )
-from app.prompts.renovation import ROOM_ANALYSIS_PROMPT, SUMMARY_PROMPT
+from app.prompts.renovation import FLOOR_PLAN_ANALYSIS_PROMPT, ROOM_ANALYSIS_PROMPT, SUMMARY_PROMPT
 from app.services.image_classifier import get_room_label
 from app.services.openai_client import get_openai_client
 
@@ -333,6 +335,102 @@ class RenovationEstimatorService:
 
         return room_analyses
 
+    async def analyze_floor_plan(
+        self,
+        image_urls: list[str],
+        property_data: PropertyData | None = None,
+    ) -> FloorPlanAnalysis | None:
+        """
+        Analyse floor plan image(s) and return layout optimisation ideas.
+
+        Sends the images to GPT-4o with FLOOR_PLAN_ANALYSIS_PROMPT. The result
+        is non-critical — callers should treat None as "no ideas available" and
+        continue normally without raising an error.
+
+        Args:
+            image_urls:    URLs of floor plan images to analyse.
+            property_data: Optional property metadata for context (typology, area, price).
+
+        Returns:
+            FloorPlanAnalysis with ideas, or None on any failure.
+        """
+        if not image_urls:
+            return None
+
+        # Build property context string from metadata when available
+        if property_data:
+            parts = []
+            if property_data.num_rooms:
+                parts.append(f"T{property_data.num_rooms}")
+            if property_data.area_m2:
+                parts.append(f"{property_data.area_m2:.0f}m²")
+            if property_data.price:
+                parts.append(f"{property_data.price:,.0f}€")
+            if property_data.location:
+                parts.append(property_data.location)
+            context_line = ", ".join(parts)
+            property_context = (
+                f"DADOS DO IMÓVEL: {context_line}\n\n" if context_line else ""
+            )
+        else:
+            property_context = ""
+
+        prompt = FLOOR_PLAN_ANALYSIS_PROMPT.format(property_context=property_context)
+
+        content_payload: list[dict] = [{"type": "text", "text": prompt}]
+        for url in image_urls:
+            content_payload.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url, "detail": "high"},
+                }
+            )
+
+        try:
+            async with self.semaphore:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": content_payload}],
+                    max_tokens=1500,
+                    response_format={"type": "json_object"},
+                )
+
+            msg = response.choices[0].message
+
+            if msg.refusal:
+                logger.warning("floor_plan_analysis_refusal", refusal=msg.refusal)
+                return None
+
+            if msg.content is None:
+                logger.warning(
+                    "floor_plan_analysis_null_content",
+                    finish_reason=response.choices[0].finish_reason,
+                )
+                return None
+
+            data = json.loads(msg.content)
+
+            ideas = [
+                FloorPlanIdea(
+                    title=idea.get("title", ""),
+                    description=idea.get("description", ""),
+                    potential_impact=idea.get("potential_impact", ""),
+                    estimated_complexity=idea.get("estimated_complexity", "media"),
+                )
+                for idea in data.get("ideas", [])
+            ]
+
+            return FloorPlanAnalysis(
+                images=image_urls,
+                ideas=ideas,
+                property_context=data.get("property_context", ""),
+                confidence=float(data.get("confidence", 0.5)),
+            )
+
+        except Exception as e:
+            logger.error("floor_plan_analysis_error", error=str(e))
+            return None
+
     async def generate_summary(
         self,
         property_data: PropertyData | None,
@@ -400,6 +498,7 @@ class RenovationEstimatorService:
         property_data: PropertyData | None,
         room_analyses: list[RoomAnalysis],
         summary: str,
+        floor_plan_analysis: FloorPlanAnalysis | None = None,
     ) -> RenovationEstimate:
         """
         Create the final renovation estimate.
@@ -433,4 +532,5 @@ class RenovationEstimatorService:
             total_cost_max=total_max,
             overall_confidence=min(1.0, weighted_confidence),
             summary=summary,
+            floor_plan_ideas=floor_plan_analysis,
         )

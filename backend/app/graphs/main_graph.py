@@ -17,6 +17,7 @@ Usage:
         pass
 """
 
+import asyncio
 from typing import Any
 
 import structlog
@@ -277,13 +278,17 @@ async def group_node(
         num_bathrooms=num_bathrooms,
     )
 
-    # Filter out exterior and other non-room images for estimation
+    # Separate floor plan images, filter out exterior/other non-room images for estimation
     room_groups = {}
+    floor_plan_urls: list[str] = []
     skipped_types = [RoomType.EXTERIOR.value, RoomType.OTHER.value]
 
     for room_key, room_classifications in grouped.items():
         room_type = room_classifications[0].room_type.value
-        if room_type not in skipped_types:
+        if room_type == RoomType.FLOOR_PLAN.value:
+            # Collect floor plan URLs for dedicated layout analysis
+            floor_plan_urls.extend(c.image_url for c in room_classifications)
+        elif room_type not in skipped_types:
             room_groups[room_key] = [
                 {
                     "image_url": c.image_url,
@@ -294,10 +299,16 @@ async def group_node(
                 for c in room_classifications
             ]
 
+    msg_parts = [
+        f"Agrupadas {sum(len(v) for v in room_groups.values())} fotos em {len(room_groups)} divisões"
+    ]
+    if floor_plan_urls:
+        msg_parts.append(f"{len(floor_plan_urls)} planta(s) identificada(s)")
+
     events.append(
         StreamEvent(
             type="status",
-            message=f"Agrupadas {sum(len(v) for v in room_groups.values())} fotos em {len(room_groups)} divisões",
+            message="; ".join(msg_parts),
             step=3,
             total_steps=5,
             data={"num_rooms": len(room_groups), "rooms": list(room_groups.keys())},
@@ -307,6 +318,7 @@ async def group_node(
     return {
         **state,
         "grouped_images": room_groups,
+        "floor_plan_urls": floor_plan_urls,
         "stream_events": events,
         "current_step": "grouped",
     }
@@ -376,10 +388,40 @@ async def estimate_node(
                 )
             )
 
-        # Run all room analyses concurrently (semaphore caps at max_concurrent)
-        room_analyses = await estimator_service.analyze_all_rooms(
-            grouped_classifications, progress_callback=room_progress_callback
-        )
+        floor_plan_urls: list[str] = state.get("floor_plan_urls", [])
+        property_data = state.get("property_data")
+
+        if floor_plan_urls:
+            events.append(
+                StreamEvent(
+                    type="status",
+                    message="A analisar planta do imóvel...",
+                    step=4,
+                    total_steps=5,
+                )
+            )
+            # Run room analyses and floor plan analysis concurrently
+            room_analyses, floor_plan_analysis = await asyncio.gather(
+                estimator_service.analyze_all_rooms(
+                    grouped_classifications, progress_callback=room_progress_callback
+                ),
+                estimator_service.analyze_floor_plan(floor_plan_urls, property_data),
+            )
+            if floor_plan_analysis:
+                events.append(
+                    StreamEvent(
+                        type="status",
+                        message=f"Encontradas {len(floor_plan_analysis.ideas)} ideias para otimização do espaço",
+                        step=4,
+                        total_steps=5,
+                    )
+                )
+        else:
+            # No floor plan images — run room analyses only
+            room_analyses = await estimator_service.analyze_all_rooms(
+                grouped_classifications, progress_callback=room_progress_callback
+            )
+            floor_plan_analysis = None
 
         events.append(
             StreamEvent(
@@ -393,6 +435,7 @@ async def estimate_node(
         return {
             **state,
             "room_analyses": room_analyses,
+            "floor_plan_analysis": floor_plan_analysis,
             "stream_events": events,
             "current_step": "estimated",
         }
@@ -452,6 +495,7 @@ async def summarize_node(
             property_data,
             room_analyses,
             summary,
+            floor_plan_analysis=state.get("floor_plan_analysis"),
         )
 
         events.append(
