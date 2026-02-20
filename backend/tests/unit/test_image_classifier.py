@@ -117,7 +117,8 @@ class TestGPTMapPromptCoverage:
                     # Format: "- cozinha: Cozinha"
                     key = stripped.lstrip("- ").split(":")[0].strip()
                     room_types.append(key)
-                elif stripped.startswith("Responde"):
+                elif stripped:
+                    # Any non-empty, non-bullet line signals the end of the block
                     break
         return room_types
 
@@ -287,6 +288,12 @@ class TestClassifyFromTag:
         url = "https://img.idealista.pt/abc/photo.jpg"
         result = classify_from_tag(url, "kitchen")
         assert result.image_url == url
+
+    def test_office_tag_maps_to_bedroom(self):
+        """Apify 'office' tag must map to BEDROOM (treated as a bedroom for renovation purposes)."""
+        result = classify_from_tag("http://img/office.jpg", "office")
+        assert result is not None
+        assert result.room_type == RoomType.BEDROOM
 
 
 class TestClassifyImagesWithTags:

@@ -65,7 +65,7 @@ APIFY_TAG_MAP: dict[str, RoomType] = {
     "hall": RoomType.HALLWAY,
     "corridor": RoomType.HALLWAY,
     "laundry": RoomType.STORAGE,
-    "office": RoomType.OTHER,
+    "office": RoomType.BEDROOM,
     "pool": RoomType.EXTERIOR,
     "planta": RoomType.FLOOR_PLAN,
     "floor_plan": RoomType.FLOOR_PLAN,
