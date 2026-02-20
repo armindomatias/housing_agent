@@ -90,7 +90,8 @@ housing_agent/
 ├── backend/                  # Python FastAPI + LangGraph
 │   ├── app/
 │   │   ├── main.py           # FastAPI entry point
-│   │   ├── config.py         # Settings (pydantic-settings)
+│   │   ├── config.py         # Settings (pydantic-settings) + nested config models
+│   │   ├── constants.py      # Business logic constants (mappings, thresholds, labels)
 │   │   ├── api/v1/           # Routers (one per endpoint group)
 │   │   ├── models/           # Pydantic models
 │   │   ├── services/         # Business logic (one service per file)
@@ -107,6 +108,8 @@ housing_agent/
 │       ├── app/              # Next.js app router pages
 │       ├── components/       # React components
 │       ├── hooks/            # Custom React hooks
+│       ├── lib/
+│       │   └── config.ts     # Centralized frontend constants
 │       ├── types/            # TypeScript type definitions
 │       └── __tests__/        # Vitest test suite
 ├── docs/features/            # Feature documentation (git-tracked)
@@ -208,11 +211,14 @@ Write tests alongside code, not after:
 - Integration tests for API endpoints
 - See **Testing Standards** below
 
-### 6. Document
+### 6. Document (MANDATORY)
 
-Create/update the feature doc in `docs/features/<feature-name>/README.md` with:
+Every change — feature, fix, refactor, or chore — MUST have documentation:
 
-- Goal, Scope checklist, Decisions log, Files Changed
+- Create/update the feature doc in `docs/features/<feature-name>/README.md` with:
+  - Goal, Scope checklist, Decisions log, Files Changed
+- For small fixes/chores: a shorter doc is fine, but it must exist
+- Update `CLAUDE.md` if the change affects architecture, conventions, or patterns
 
 ### 7. Review
 
@@ -289,3 +295,26 @@ cd frontend && npm run test
 - **No magic numbers**: Use named constants or config values
 - **File size**: Keep files under 300 lines. Split if larger.
 - **Error messages**: User-facing messages in Portuguese, logs in English
+
+## Configuration & Constants
+
+### Where to Put New Values
+
+When adding new configurable values, follow this decision tree:
+
+1. **Does it change per environment (dev/staging/prod)?** → `backend/app/config.py` (nested Pydantic model)
+   - Examples: API URLs, timeouts, concurrency limits, max_tokens, feature flags
+   - These are env-overridable via `SECTION__KEY` format (e.g. `APIFY__MAX_RETRIES=5`)
+
+2. **Is it business logic that's constant across environments?** → `backend/app/constants.py`
+   - Examples: fallback cost tables, tag mappings, room labels, confidence thresholds, enum-to-string maps
+   - Import from `app.constants` — never define inline in service files
+
+3. **Is it a frontend display/behavior constant?** → `frontend/src/lib/config.ts`
+   - Examples: display limits, locale, validation rules, API paths, step labels
+
+### Rules
+
+- NEVER hardcode magic numbers, URLs, limits, or thresholds directly in service/component files
+- Every operational parameter must be traceable to `config.py`, `constants.py`, or `frontend/src/lib/config.ts`
+- When modifying a config value's default, update `backend/.env.example` if it's env-overridable
