@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Navbar } from "@/components/Navbar";
 import { UrlInput } from "@/components/UrlInput";
 import { HowItWorks } from "@/components/HowItWorks";
-import { ProgressIndicator } from "@/components/ProgressIndicator";
+import { AnalysisLoadingSkeleton } from "@/components/AnalysisLoadingSkeleton";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
 import { usePropertyAnalysis } from "@/hooks/usePropertyAnalysis";
 import { useAuth } from "@/hooks/useAuth";
@@ -89,12 +89,14 @@ function HomeContent() {
 
         {/* Progress while analyzing */}
         {isAnalyzing && (
-          <div className="flex-1 flex items-center justify-center px-4 py-12">
-            <ProgressIndicator
-              events={events}
-              currentStep={currentStep}
-              totalSteps={totalSteps}
-            />
+          <div className="flex-1 px-4 py-12">
+            <div className="max-w-4xl mx-auto">
+              <AnalysisLoadingSkeleton
+                events={events}
+                currentStep={currentStep}
+                totalSteps={totalSteps}
+              />
+            </div>
           </div>
         )}
 
