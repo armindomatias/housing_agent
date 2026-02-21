@@ -66,13 +66,13 @@ export function UrlInput({ onSubmit, isLoading, defaultValue = "" }: UrlInputPro
         <Button
           type="submit"
           disabled={isLoading || !url}
-          className="h-12 px-6 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
+          className="h-12 px-6 bg-slate-900 text-white hover:bg-slate-800 disabled:bg-slate-400 font-semibold"
         >
           {isLoading ? "A analisar..." : "Analisar"}
         </Button>
       </div>
-      {error && <p className="text-red-400 text-sm mt-2">{error}</p>}
-      <p className="text-slate-500 text-sm mt-2">
+      {error && <p className="text-white font-medium text-sm mt-2">{error}</p>}
+      <p className="text-orange-100 text-sm mt-2">
         Exemplo: https://www.idealista.pt/imovel/12345678/
       </p>
     </form>

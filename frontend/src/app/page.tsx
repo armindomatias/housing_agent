@@ -47,13 +47,12 @@ function HomeContent() {
       <main className="flex-1 flex flex-col">
         {/* Hero section */}
         {showLanding && (
-          <section className="bg-slate-950 py-20 px-4">
+          <section className="bg-orange-500 py-20 px-4">
             <div className="max-w-3xl mx-auto text-center space-y-6">
               <h1 className="text-4xl sm:text-5xl font-bold text-white leading-tight">
-                Quanto custa remodelar o{" "}
-                <span className="text-orange-500">seu imóvel?</span>
+                Quanto custa remodelar o seu imóvel?
               </h1>
-              <p className="text-lg text-slate-400 max-w-xl mx-auto">
+              <p className="text-lg text-orange-100 max-w-xl mx-auto">
                 Cole o link de um anúncio do Idealista e receba uma estimativa
                 detalhada de custos de remodelação, divisão a divisão.
               </p>
