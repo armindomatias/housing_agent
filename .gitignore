@@ -16,3 +16,6 @@ Thumbs.db
 # Claude settings
 .claude/
 /.cursor
+
+# dont commit docs
+docs/
