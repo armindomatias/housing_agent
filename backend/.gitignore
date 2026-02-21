@@ -56,3 +56,6 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# notebooks
+notebooks/

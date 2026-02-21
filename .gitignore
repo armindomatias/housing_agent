@@ -13,6 +13,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# LLM/Claude settings 
-/.claude
+# Claude settings
+.claude/
 /.cursor
