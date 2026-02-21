@@ -1,6 +1,7 @@
 "use client";
 
 import type { StreamEvent } from "@/types/analysis";
+import { Card, CardContent } from "@/components/ui/card";
 import { MAX_RECENT_EVENTS, STEP_LABELS } from "@/lib/config";
 
 interface ProgressIndicatorProps {
@@ -27,50 +28,52 @@ export function ProgressIndicator({
     <div className="w-full max-w-2xl space-y-4">
       {/* Progress bar */}
       <div className="space-y-2">
-        <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
+        <div className="flex justify-between text-sm text-muted-foreground">
           <span>
             Passo {currentStep} de {totalSteps}
           </span>
           <span>{STEP_LABELS[currentStep] || ""}</span>
         </div>
-        <div className="w-full bg-gray-200 rounded-full h-2 dark:bg-gray-700">
+        <div className="w-full bg-secondary rounded-full h-2">
           <div
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+            className="bg-primary h-2 rounded-full transition-all duration-300"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
       </div>
 
       {/* Event log */}
-      <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 min-h-[120px]">
-        <div className="space-y-2 font-mono text-sm">
-          {recentEvents.map((event, index) => (
-            <div
-              key={index}
-              className={`flex items-start gap-2 ${
-                event.type === "error"
-                  ? "text-red-600"
-                  : event.type === "result"
-                    ? "text-green-600"
-                    : event.type === "progress"
-                      ? "text-gray-500"
-                      : "text-gray-700 dark:text-gray-300"
-              }`}
-            >
-              <span className="shrink-0">
-                {event.type === "status" && ">>"}
-                {event.type === "progress" && "  "}
-                {event.type === "result" && "OK"}
-                {event.type === "error" && "!!"}
-              </span>
-              <span>{event.message}</span>
-            </div>
-          ))}
-          {recentEvents.length === 0 && (
-            <div className="text-gray-500 animate-pulse">A iniciar análise...</div>
-          )}
-        </div>
-      </div>
+      <Card>
+        <CardContent className="pt-4 min-h-[120px]">
+          <div className="space-y-2 font-mono text-sm">
+            {recentEvents.map((event, index) => (
+              <div
+                key={index}
+                className={`flex items-start gap-2 ${
+                  event.type === "error"
+                    ? "text-destructive"
+                    : event.type === "result"
+                      ? "text-green-600"
+                      : event.type === "progress"
+                        ? "text-muted-foreground"
+                        : "text-foreground"
+                }`}
+              >
+                <span className="shrink-0">
+                  {event.type === "status" && ">>"}
+                  {event.type === "progress" && "  "}
+                  {event.type === "result" && "OK"}
+                  {event.type === "error" && "!!"}
+                </span>
+                <span>{event.message}</span>
+              </div>
+            ))}
+            {recentEvents.length === 0 && (
+              <div className="text-muted-foreground animate-pulse">A iniciar análise...</div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
