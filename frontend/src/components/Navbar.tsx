@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
+import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { AUTH_PAGE_PATH } from "@/lib/config";
@@ -8,6 +10,7 @@ import { AUTH_PAGE_PATH } from "@/lib/config";
 export function Navbar() {
   const router = useRouter();
   const { user, loading, signOut } = useAuth();
+  const { theme, setTheme } = useTheme();
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur-sm">
@@ -15,6 +18,16 @@ export function Navbar() {
         <span className="text-xl font-bold text-primary tracking-tight">Rehabify</span>
 
         <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            aria-label="Alternar tema"
+          >
+            <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+            <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+          </Button>
+
           {!loading && user && (
             <>
               <span className="text-sm text-muted-foreground hidden sm:inline">
