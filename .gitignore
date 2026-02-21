@@ -19,3 +19,6 @@ Thumbs.db
 
 # dont commit docs
 docs/
+
+# others
+.ruff_cache/
