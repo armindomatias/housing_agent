@@ -1,8 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { Suspense, useState, FormEvent, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type AuthTab = "login" | "signup";
 
@@ -76,15 +79,17 @@ function AuthPageContent() {
     <main className="min-h-screen flex items-center justify-center py-12 px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">Rehabify</h1>
-          <p className="text-gray-600 dark:text-gray-400">
+          <Link href="/">
+            <h1 className="text-3xl font-bold mb-2 text-primary">Rehabify</h1>
+          </Link>
+          <p className="text-muted-foreground">
             Aceda à sua conta para analisar imóveis
           </p>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+        <div className="bg-card rounded-xl border border-border p-6">
           {/* Tab toggle */}
-          <div className="flex mb-6 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+          <div className="flex mb-6 border border-border rounded-lg overflow-hidden">
             <button
               type="button"
               onClick={() => {
@@ -94,8 +99,8 @@ function AuthPageContent() {
               }}
               className={`flex-1 py-2 text-sm font-medium transition-colors ${
                 tab === "login"
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent"
               }`}
             >
               Entrar
@@ -109,8 +114,8 @@ function AuthPageContent() {
               }}
               className={`flex-1 py-2 text-sm font-medium transition-colors ${
                 tab === "signup"
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent"
               }`}
             >
               Criar conta
@@ -140,7 +145,7 @@ function AuthPageContent() {
                 <label htmlFor="email" className="text-sm font-medium">
                   Email
                 </label>
-                <input
+                <Input
                   id="email"
                   type="email"
                   value={email}
@@ -148,7 +153,6 @@ function AuthPageContent() {
                   placeholder="o-seu@email.com"
                   required
                   disabled={isLoading}
-                  className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-800 dark:border-gray-600"
                 />
               </div>
 
@@ -156,7 +160,7 @@ function AuthPageContent() {
                 <label htmlFor="password" className="text-sm font-medium">
                   Palavra-passe
                 </label>
-                <input
+                <Input
                   id="password"
                   type="password"
                   value={password}
@@ -164,21 +168,19 @@ function AuthPageContent() {
                   placeholder="••••••••"
                   required
                   disabled={isLoading}
-                  className="px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent dark:bg-gray-800 dark:border-gray-600"
                 />
               </div>
 
-              <button
+              <Button
                 type="submit"
                 disabled={isLoading || !email || !password}
-                className="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
                 {isLoading
                   ? "A processar..."
                   : tab === "login"
                   ? "Entrar"
                   : "Criar conta"}
-              </button>
+              </Button>
             </form>
           )}
         </div>
