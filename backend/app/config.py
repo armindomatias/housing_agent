@@ -53,9 +53,9 @@ class StripeConfig(BaseModel):
 
     secret_key: str = ""
     webhook_secret: str = ""
-    price_pro_monthly: str = ""
-    price_pro_quarterly: str = ""
-    price_pro_yearly: str = ""
+    price_pro_monthly: str = "10"
+    price_pro_quarterly: str = "20"
+    price_pro_yearly: str = "50"
     checkout_success_url: str = "http://localhost:3000/?billing=success"
     checkout_cancel_url: str = "http://localhost:3000/pricing?billing=cancelled"
     portal_return_url: str = "http://localhost:3000/"
