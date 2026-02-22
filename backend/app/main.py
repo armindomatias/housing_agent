@@ -20,15 +20,22 @@ from supabase import acreate_client
 from supabase._async.client import AsyncClient as AsyncSupabaseClient
 
 from app.api.v1.analyze import router as analyze_router
+from app.api.v1.billing import router as billing_router
 from app.config import get_settings
 from app.constants import API_TITLE, API_VERSION
 from app.graphs.main_graph import build_renovation_graph
 from app.logging_config import setup_logging
 from app.middleware import RequestContextMiddleware
+from app.services.billing_service import (
+    BillingService,
+    InMemoryBillingRepository,
+    SupabaseBillingRepository,
+)
 from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService
 from app.services.image_downloader import ImageDownloaderService
 from app.services.renovation_estimator import RenovationEstimatorService
+from app.services.stripe_service import StripeService
 
 # Get settings before logging setup so we know the debug flag
 settings = get_settings()
@@ -78,6 +85,28 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
     _app.state.supabase = supabase_client
 
+    if supabase_client is not None:
+        billing_repository = SupabaseBillingRepository(
+            supabase_client,
+            accounts_table=settings.billing.accounts_table,
+            webhook_events_table=settings.billing.webhook_events_table,
+        )
+    else:
+        billing_repository = InMemoryBillingRepository()
+        logger.warning("billing_repo_fallback", detail="using in-memory billing repository")
+
+    billing_service = BillingService(billing_repository, settings.billing)
+
+    stripe_service = None
+    if settings.stripe.secret_key:
+        try:
+            stripe_service = StripeService(settings.stripe)
+            logger.info("stripe_configured")
+        except Exception as e:
+            logger.warning("stripe_init_failed", error=str(e))
+    else:
+        logger.warning("stripe_not_configured")
+
     # Create services once at startup
     idealista_service = IdealistaService(settings.apify_token, settings.apify)
     classifier_service = ImageClassifierService(
@@ -109,6 +138,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.classifier_service = classifier_service
     _app.state.estimator_service = estimator_service
     _app.state.graph = graph
+    _app.state.billing_service = billing_service
+    _app.state.stripe_service = stripe_service
 
     logger.info("services_initialized")
 
@@ -147,6 +178,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(analyze_router, prefix="/api/v1")
+app.include_router(billing_router, prefix="/api/v1")
 
 
 @app.get("/")

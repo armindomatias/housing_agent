@@ -48,6 +48,34 @@ class ApifyConfig(BaseModel):
     request_timeout_seconds: float = 120.0
 
 
+class StripeConfig(BaseModel):
+    """Stripe integration configuration."""
+
+    secret_key: str = ""
+    webhook_secret: str = ""
+    price_pro_monthly: str = ""
+    price_pro_quarterly: str = ""
+    price_pro_yearly: str = ""
+    checkout_success_url: str = "http://localhost:3000/?billing=success"
+    checkout_cancel_url: str = "http://localhost:3000/pricing?billing=cancelled"
+    portal_return_url: str = "http://localhost:3000/"
+
+
+class BillingConfig(BaseModel):
+    """Billing and entitlement configuration."""
+
+    enabled: bool = True
+    enforce_analysis_access: bool = True
+    free_analyses_lifetime: int = 2
+    daily_hard_cap: int = 10
+    pro_monthly_quota: int = 30
+    pro_quarterly_quota: int = 100
+    pro_yearly_quota: int = 420
+    master_user_ids: list[str] = Field(default_factory=list)
+    accounts_table: str = "billing_accounts"
+    webhook_events_table: str = "billing_webhook_events"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -87,6 +115,8 @@ class Settings(BaseSettings):
     openai_config: OpenAIConfig = Field(default_factory=OpenAIConfig)
     image_processing: ImageProcessingConfig = Field(default_factory=ImageProcessingConfig)
     apify: ApifyConfig = Field(default_factory=ApifyConfig)
+    stripe: StripeConfig = Field(default_factory=StripeConfig)
+    billing: BillingConfig = Field(default_factory=BillingConfig)
 
 
 @lru_cache

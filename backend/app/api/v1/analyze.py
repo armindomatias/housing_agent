@@ -9,6 +9,7 @@ Endpoints:
 - POST /api/v1/analyze/sync - Analyze a property without streaming (simpler)
 """
 
+import asyncio
 import inspect
 import json
 from typing import Any, AsyncGenerator
@@ -20,7 +21,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.auth import CurrentUser
 from app.graphs.state import create_initial_state
+from app.models.billing import EntitlementDecision
 from app.models.property import RenovationEstimate
+from app.services.billing_service import BillingService
 
 logger = structlog.get_logger(__name__)
 
@@ -42,7 +45,11 @@ class AnalyzeResponse(BaseModel):
 
 
 async def stream_analysis(
-    url: str, user_id: str, graph: Any
+    url: str,
+    user_id: str,
+    graph: Any,
+    billing_service: BillingService | None = None,
+    reservation_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Generator that streams analysis events as SSE.
@@ -61,6 +68,8 @@ async def stream_analysis(
 
     # Track which events we've already sent
     sent_events = 0
+    has_result = False
+    has_error = False
 
     try:
         async for state in graph.astream(initial_state):
@@ -85,11 +94,21 @@ async def stream_analysis(
                     else:
                         event_data = event
 
+                    event_type = event_data.get("type")
+                    if event_type == "result":
+                        has_result = True
+                    elif event_type == "error":
+                        has_error = True
+
                     yield json.dumps(event_data, ensure_ascii=False)
                     sent_events += 1
 
+    except asyncio.CancelledError:
+        has_error = True
+        raise
     except Exception as e:
         logger.error("stream_analysis_error", error=str(e))
+        has_error = True
         error_event = {
             "type": "error",
             "message": f"Erro inesperado: {str(e)}",
@@ -97,6 +116,30 @@ async def stream_analysis(
             "total_steps": 5,
         }
         yield json.dumps(error_event, ensure_ascii=False)
+    finally:
+        if billing_service and reservation_id:
+            if has_result and not has_error:
+                await billing_service.commit_reservation(reservation_id)
+            else:
+                await billing_service.release_reservation(reservation_id)
+
+
+def _get_billing_service(request: Request) -> BillingService | None:
+    return getattr(request.app.state, "billing_service", None)
+
+
+def _payment_required_error(decision: EntitlementDecision) -> HTTPException:
+    return HTTPException(
+        status_code=402,
+        detail={
+            "code": "payment_required",
+            "reason": decision.reason.value,
+            "plan_code": decision.plan_code.value,
+            "free_analyses_remaining": decision.free_analyses_remaining,
+            "analyses_remaining": decision.analyses_remaining,
+            "daily_remaining": decision.daily_remaining,
+        },
+    )
 
 
 @router.post("", response_class=EventSourceResponse)
@@ -127,8 +170,23 @@ async def analyze_property_stream(
     """
     structlog.contextvars.bind_contextvars(property_url=str(body.url), user_id=user.id)
     graph = request.app.state.graph
+    billing_service = _get_billing_service(request)
+    reservation_id: str | None = None
+
+    if billing_service is not None:
+        decision = await billing_service.reserve_analysis(user.id)
+        if not decision.allowed:
+            raise _payment_required_error(decision)
+        reservation_id = decision.reservation_id
+
     return EventSourceResponse(
-        stream_analysis(str(body.url), user.id, graph),
+        stream_analysis(
+            str(body.url),
+            user.id,
+            graph,
+            billing_service=billing_service,
+            reservation_id=reservation_id,
+        ),
         media_type="text/event-stream",
     )
 
@@ -147,14 +205,25 @@ async def analyze_property_sync(
 
     Returns the complete RenovationEstimate or an error message.
     """
+    billing_service = _get_billing_service(request)
+    reservation_id: str | None = None
+
     try:
         structlog.contextvars.bind_contextvars(property_url=str(body.url), user_id=user.id)
+        if billing_service is not None:
+            decision = await billing_service.reserve_analysis(user.id)
+            if not decision.allowed:
+                raise _payment_required_error(decision)
+            reservation_id = decision.reservation_id
+
         graph = request.app.state.graph
         initial_state = create_initial_state(str(body.url), user.id)
 
         final_state = await graph.ainvoke(initial_state)
 
         if final_state.get("error"):
+            if billing_service is not None:
+                await billing_service.release_reservation(reservation_id)
             return AnalyzeResponse(
                 success=False,
                 error=final_state["error"],
@@ -162,10 +231,15 @@ async def analyze_property_sync(
 
         estimate = final_state.get("estimate")
         if estimate is None:
+            if billing_service is not None:
+                await billing_service.release_reservation(reservation_id)
             return AnalyzeResponse(
                 success=False,
                 error="Não foi possível gerar a estimativa",
             )
+
+        if billing_service is not None:
+            await billing_service.commit_reservation(reservation_id)
 
         return AnalyzeResponse(
             success=True,
@@ -173,7 +247,11 @@ async def analyze_property_sync(
         )
 
     except Exception as e:
+        if billing_service is not None:
+            await billing_service.release_reservation(reservation_id)
         logger.error("sync_analysis_error", error=str(e))
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(
             status_code=500,
             detail=f"Erro na análise: {str(e)}",
