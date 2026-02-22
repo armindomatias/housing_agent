@@ -36,6 +36,12 @@ from app.constants import (
     IMAGE_BOOST_MAX,
     IMAGE_BOOST_PER_IMAGE,
 )
+from app.models.features.enums import WorkScope
+from app.models.features.modules import PropertyContext, RoomFeatures
+from app.models.features.outputs import (
+    RoomCostResult,
+    UserPreferences,
+)
 from app.models.property import (
     FloorPlanAnalysis,
     FloorPlanIdea,
@@ -48,6 +54,12 @@ from app.models.property import (
     RoomType,
 )
 from app.prompts.renovation import FLOOR_PLAN_ANALYSIS_PROMPT, ROOM_ANALYSIS_PROMPT, SUMMARY_PROMPT
+from app.services.cost_calculator import (
+    calculate_costs,
+    compute_composite_indices,
+    renovation_items_from_cost_result,
+)
+from app.services.feature_extractor import FeatureExtractorService, derive_property_context
 from app.services.image_classifier import get_room_label
 from app.services.openai_client import get_openai_client
 
@@ -64,73 +76,175 @@ class RenovationEstimatorService:
         max_concurrent: int = 3,
         openai_config: OpenAIConfig | None = None,
         image_processing: ImageProcessingConfig | None = None,
+        user_preferences: UserPreferences | None = None,
+        property_data: PropertyData | None = None,
     ):
         """
         Initialize the renovation estimator.
 
         Args:
-            openai_api_key:   OpenAI API key
-            model:            Model to use for analysis
-            max_concurrent:   Maximum simultaneous room-analysis API calls.
-            openai_config:    OpenAI call parameters (max_tokens, detail levels).
-            image_processing: Image processing limits (images per room analysis).
+            openai_api_key:    OpenAI API key
+            model:             Model to use for analysis
+            max_concurrent:    Maximum simultaneous room-analysis API calls.
+            openai_config:     OpenAI call parameters (max_tokens, detail levels).
+            image_processing:  Image processing limits (images per room analysis).
+            user_preferences:  User preferences for cost calculation (diy, finish_level).
+            property_data:     Property data for deriving context (region, era, etc.).
         """
         self.client = get_openai_client(openai_api_key)
         self.model = model
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.openai_config = openai_config or OpenAIConfig()
         self.image_processing = image_processing or ImageProcessingConfig()
+        self.user_preferences = user_preferences or UserPreferences()
+        self._property_context: PropertyContext | None = (
+            derive_property_context(property_data) if property_data else None
+        )
+        self._feature_extractor = FeatureExtractorService(
+            openai_api_key=openai_api_key,
+            model=model,
+            openai_config=self.openai_config,
+        )
 
     async def analyze_room(
         self,
         room_type: RoomType,
         room_number: int,
         image_urls: list[str],
+        property_context: PropertyContext | None = None,
     ) -> RoomAnalysis:
         """
-        Analyze a single room and estimate renovation costs.
+        Analyze a single room using feature extraction + deterministic cost calculation.
 
-        This method receives ALL photos of a specific room and analyzes them
-        together to provide a single, comprehensive estimate.
+        Flow:
+          1. Feature extractor (GPT-4o) → structured features (no cost reasoning)
+          2. Cost calculator (pure Python) → deterministic costs from features
+          3. Map cost result → backward-compat RoomAnalysis fields
+
+        Falls back to legacy GPT analysis if feature extraction fails.
 
         Args:
-            room_type: Type of room (kitchen, bedroom, etc.)
-            room_number: Room number (1, 2, etc.)
-            image_urls: List of image URLs for this room
+            room_type:        Type of room (kitchen, bedroom, etc.)
+            room_number:      Room number (1, 2, etc.)
+            image_urls:       List of image URLs for this room
+            property_context: Property-level context for cost calculation
 
         Returns:
             RoomAnalysis with condition assessment and cost estimates
         """
         room_label = get_room_label(room_type, room_number)
+        context = property_context or self._property_context or PropertyContext()
 
-        # Build the prompt with room context
+        async with self.semaphore:
+            features = await self._feature_extractor.extract_room_features(
+                room_type=room_type,
+                room_label=room_label,
+                image_urls=image_urls,
+                max_images=self.image_processing.images_per_room_analysis,
+            )
+
+        if features is not None:
+            return self._build_analysis_from_features(
+                features=features,
+                room_type=room_type,
+                room_number=room_number,
+                room_label=room_label,
+                image_urls=image_urls,
+                context=context,
+            )
+
+        # Feature extraction failed — fall back to legacy GPT analysis
+        logger.warning("feature_extraction_failed_using_legacy", room_label=room_label)
+        return await self._analyze_room_legacy(room_type, room_number, image_urls, room_label)
+
+    def _build_analysis_from_features(
+        self,
+        features: "RoomFeatures",
+        room_type: RoomType,
+        room_number: int,
+        room_label: str,
+        image_urls: list[str],
+        context: PropertyContext,
+    ) -> RoomAnalysis:
+        """Build RoomAnalysis from structured features + cost calculator."""
+
+        cost_result = calculate_costs(features, room_type, self.user_preferences, context)
+
+        # Backward compat: derive condition from overall work scope
+        condition = self._work_scope_to_condition(cost_result.work_scope.overall)
+        condition_notes = self._features_to_notes(features)
+
+        renovation_items = renovation_items_from_cost_result(cost_result)
+
+        total_min = round(cost_result.cost_breakdown.total_min, 2)
+        total_max = round(cost_result.cost_breakdown.total_max, 2)
+
+        # Confidence from module confidence
+        confidence = min(
+            1.0,
+            cost_result.module_confidence.overall + min(IMAGE_BOOST_MAX, len(image_urls) * IMAGE_BOOST_PER_IMAGE),
+        )
+
+        return RoomAnalysis(
+            room_type=room_type,
+            room_number=room_number,
+            room_label=room_label,
+            images=image_urls,
+            condition=condition,
+            condition_notes=condition_notes,
+            renovation_items=renovation_items,
+            cost_min=total_min,
+            cost_max=total_max,
+            confidence=confidence,
+            features=features,
+            cost_breakdown=cost_result.cost_breakdown,
+        )
+
+    def _work_scope_to_condition(self, scope: WorkScope) -> RoomCondition:
+        """Map WorkScope to backward-compat RoomCondition."""
+        mapping = {
+            WorkScope.NONE: RoomCondition.EXCELLENT,
+            WorkScope.REPAIR: RoomCondition.GOOD,
+            WorkScope.REFURBISH: RoomCondition.FAIR,
+            WorkScope.REPLACE: RoomCondition.POOR,
+            WorkScope.FULL_RENOVATION: RoomCondition.NEEDS_FULL_RENOVATION,
+        }
+        return mapping.get(scope, RoomCondition.FAIR)
+
+    def _features_to_notes(self, features: "RoomFeatures") -> str:
+        """Extract consolidated notes from features for condition_notes field."""
+        if hasattr(features, "room_notes") and features.room_notes:
+            return features.room_notes
+        if hasattr(features, "kitchen_notes") and features.kitchen_notes:
+            return features.kitchen_notes
+        if hasattr(features, "bathroom_notes") and features.bathroom_notes:
+            return features.bathroom_notes
+        return ""
+
+    async def _analyze_room_legacy(
+        self,
+        room_type: RoomType,
+        room_number: int,
+        image_urls: list[str],
+        room_label: str,
+    ) -> RoomAnalysis:
+        """Legacy GPT-based room analysis (fallback when feature extraction fails)."""
         prompt = ROOM_ANALYSIS_PROMPT.format(
             room_label=room_label,
             num_images=len(image_urls),
         )
 
-        # Build message content with all images
-        # Use content_payload to avoid variable shadowing with the response content below
         content_payload = [{"type": "text", "text": prompt}]
-
-        # Add images for this room (limited to config.images_per_room_analysis to manage costs)
         capped_urls = image_urls[:self.image_processing.images_per_room_analysis]
         for url in capped_urls:
-            content_payload.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": url,
-                        "detail": self.openai_config.estimation_detail,
-                    },
-                }
-            )
+            content_payload.append({
+                "type": "image_url",
+                "image_url": {"url": url, "detail": self.openai_config.estimation_detail},
+            })
 
-        # Tracks whether the API returned a refusal (no retry in that case)
         _refused = False
 
         async def _call_api() -> str | None:
-            """Make the API call and return content string, or None on refusal/empty."""
             nonlocal _refused
             resp = await self.client.chat.completions.create(
                 model=self.model,
@@ -139,32 +253,18 @@ class RenovationEstimatorService:
                 response_format={"type": "json_object"},
             )
             msg = resp.choices[0].message
-
             if msg.refusal:
                 _refused = True
-                logger.warning(
-                    "room_analysis_refusal",
-                    room_label=room_label,
-                    refusal=msg.refusal,
-                    image_count=len(capped_urls),
-                )
-                return None  # No retry on refusal
-
+                logger.warning("room_analysis_refusal", room_label=room_label, refusal=msg.refusal)
+                return None
             if msg.content is None:
-                logger.warning(
-                    "room_analysis_null_content",
-                    room_label=room_label,
-                    finish_reason=resp.choices[0].finish_reason,
-                    image_count=len(capped_urls),
-                )
-                return None  # Caller will decide whether to retry
-
+                logger.warning("room_analysis_null_content", room_label=room_label,
+                               finish_reason=resp.choices[0].finish_reason)
+                return None
             return msg.content
 
         try:
             content = await _call_api()
-
-            # Single retry on null content only — refusals are final
             if content is None and not _refused:
                 logger.info("room_analysis_retrying", room_label=room_label)
                 await asyncio.sleep(1)
@@ -174,27 +274,19 @@ class RenovationEstimatorService:
                 return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
 
             data = json.loads(content)
-
-            # Parse renovation items
-            renovation_items = []
-            for item_data in data.get("renovation_items", []):
-                renovation_items.append(
-                    RenovationItem(
-                        item=item_data.get("item", ""),
-                        cost_min=float(item_data.get("cost_min", 0)),
-                        cost_max=float(item_data.get("cost_max", 0)),
-                        priority=item_data.get("priority", "media"),
-                        notes=item_data.get("notes", ""),
-                    )
+            renovation_items = [
+                RenovationItem(
+                    item=item_data.get("item", ""),
+                    cost_min=float(item_data.get("cost_min", 0)),
+                    cost_max=float(item_data.get("cost_max", 0)),
+                    priority=item_data.get("priority", "media"),
+                    notes=item_data.get("notes", ""),
                 )
-
-            # Map condition string to enum
+                for item_data in data.get("renovation_items", [])
+            ]
             condition = self._map_condition(data.get("condition", "razoavel"))
-
-            # Calculate confidence boost based on number of images
             base_confidence = float(data.get("confidence", 0.5))
             image_boost = min(IMAGE_BOOST_MAX, len(image_urls) * IMAGE_BOOST_PER_IMAGE)
-            final_confidence = min(1.0, base_confidence + image_boost)
 
             return RoomAnalysis(
                 room_type=room_type,
@@ -206,15 +298,11 @@ class RenovationEstimatorService:
                 renovation_items=renovation_items,
                 cost_min=float(data.get("cost_min", 0)),
                 cost_max=float(data.get("cost_max", 0)),
-                confidence=final_confidence,
+                confidence=min(1.0, base_confidence + image_boost),
             )
 
         except json.JSONDecodeError as e:
             logger.warning("room_analysis_json_parse_error", room_label=room_label, error=str(e))
-            logger.debug(
-                "room_analysis_raw_content",
-                content=content[:500] if content else "None",
-            )
             return self._get_fallback_analysis(room_type, room_number, room_label, image_urls)
         except Exception as e:
             logger.error("room_analysis_api_error", room_label=room_label, error=str(e))
@@ -271,47 +359,43 @@ class RenovationEstimatorService:
         self,
         grouped_images: dict[str, list[ImageClassification]],
         progress_callback=None,
+        property_data: PropertyData | None = None,
     ) -> list[RoomAnalysis]:
         """
         Analyze all rooms concurrently, respecting the semaphore rate limit.
 
-        Submits one bounded coroutine per room via asyncio.as_completed() so
-        progress events fire as each room finishes rather than waiting for all.
-        The semaphore caps concurrent GPT-4o calls at self.max_concurrent.
+        Submits one coroutine per room via asyncio.as_completed() so progress
+        events fire as each room finishes. Semaphore is handled inside analyze_room.
 
         Args:
             grouped_images:    Dict mapping room key → list[ImageClassification].
                                Produced by ImageClassifierService.group_by_room().
-            progress_callback: Optional async callback(current, total, room_analysis)
-                               called as each room finishes.
+            progress_callback: Optional async callback(current, total, room_analysis).
+            property_data:     Optional property data to derive context for cost calc.
 
         Returns:
             List of RoomAnalysis objects (one per room, order may differ from input).
         """
+        context = (
+            derive_property_context(property_data)
+            if property_data
+            else self._property_context or PropertyContext()
+        )
+
         total = len(grouped_images)
         room_analyses: list[RoomAnalysis] = []
         completed = 0
 
-        async def _bounded_analyze(
-            room_type: RoomType, room_number: int, image_urls: list[str]
-        ) -> RoomAnalysis:
-            # Semaphore lives here, not in analyze_room, so analyze_room stays
-            # a clean, independently testable wrapper around the API call.
-            async with self.semaphore:
-                return await self.analyze_room(room_type, room_number, image_urls)
-
-        # Build one bounded coroutine per room
         tasks = [
-            _bounded_analyze(
+            self.analyze_room(
                 classifications[0].room_type,
                 classifications[0].room_number,
                 [c.image_url for c in classifications],
+                property_context=context,
             )
             for classifications in grouped_images.values()
         ]
 
-        # as_completed yields futures as they finish, not in submission order.
-        # This lets progress events fire immediately when a room is done.
         for coro in asyncio.as_completed(tasks):
             analysis = await coro
             room_analyses.append(analysis)
@@ -491,25 +575,42 @@ class RenovationEstimatorService:
         Create the final renovation estimate.
 
         Args:
-            property_url: Original Idealista URL
-            property_data: Scraped property data
-            room_analyses: List of room analyses
-            summary: Generated summary text
+            property_url:       Original Idealista URL
+            property_data:      Scraped property data
+            room_analyses:      List of room analyses
+            summary:            Generated summary text
+            floor_plan_analysis: Optional floor plan analysis
 
         Returns:
             Complete RenovationEstimate
         """
-        # Calculate totals
         total_min = sum(r.cost_min for r in room_analyses)
         total_max = sum(r.cost_max for r in room_analyses)
 
-        # Calculate overall confidence (weighted average by cost)
         if total_max > 0:
             weighted_confidence = sum(r.confidence * r.cost_max for r in room_analyses) / total_max
         else:
-            weighted_confidence = sum(r.confidence for r in room_analyses) / max(
-                len(room_analyses), 1
-            )
+            weighted_confidence = sum(r.confidence for r in room_analyses) / max(len(room_analyses), 1)
+
+        # Build composite indices from rooms that used feature extraction
+        room_results: dict[str, RoomCostResult] = {}
+        for r in room_analyses:
+            if r.features is not None and r.cost_breakdown is not None:
+                from app.services.cost_calculator import calculate_costs
+                ctx = (
+                    derive_property_context(property_data)
+                    if property_data
+                    else self._property_context or PropertyContext()
+                )
+                cost_result = calculate_costs(r.features, r.room_type, self.user_preferences, ctx)
+                room_results[r.room_label] = cost_result
+
+        composite = None
+        if room_results and property_data:
+            ctx = derive_property_context(property_data)
+            composite = compute_composite_indices(room_results, ctx)
+        elif room_results:
+            composite = compute_composite_indices(room_results, PropertyContext())
 
         return RenovationEstimate(
             property_url=property_url,
@@ -520,4 +621,6 @@ class RenovationEstimatorService:
             overall_confidence=min(1.0, weighted_confidence),
             summary=summary,
             floor_plan_ideas=floor_plan_analysis,
+            composite_indices=composite,
+            user_preferences=self.user_preferences,
         )

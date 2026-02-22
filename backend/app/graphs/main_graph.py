@@ -403,7 +403,9 @@ async def estimate_node(
             # Run room analyses and floor plan analysis concurrently
             room_analyses, floor_plan_analysis = await asyncio.gather(
                 estimator_service.analyze_all_rooms(
-                    grouped_classifications, progress_callback=room_progress_callback
+                    grouped_classifications,
+                    progress_callback=room_progress_callback,
+                    property_data=property_data,
                 ),
                 estimator_service.analyze_floor_plan(floor_plan_urls, property_data),
             )
@@ -419,7 +421,9 @@ async def estimate_node(
         else:
             # No floor plan images — run room analyses only
             room_analyses = await estimator_service.analyze_all_rooms(
-                grouped_classifications, progress_callback=room_progress_callback
+                grouped_classifications,
+                progress_callback=room_progress_callback,
+                property_data=property_data,
             )
             floor_plan_analysis = None
 

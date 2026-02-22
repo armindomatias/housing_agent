@@ -7,7 +7,6 @@ Values are lowercase English identifiers; Portuguese labels live in constants.py
 
 from enum import Enum
 
-
 # ---------------------------------------------------------------------------
 # M1 — Surfaces
 # ---------------------------------------------------------------------------

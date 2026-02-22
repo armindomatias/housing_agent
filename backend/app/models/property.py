@@ -118,6 +118,13 @@ class RoomAnalysis(BaseModel):
     confidence: float = Field(
         ge=0.0, le=1.0, description="Confidence in estimate (higher with more photos)"
     )
+    # New fields (feature extraction — typed as Any to avoid circular import at model definition time)
+    features: Any | None = Field(
+        default=None, description="Structured features extracted from room photos (RoomFeatures)"
+    )
+    cost_breakdown: Any | None = Field(
+        default=None, description="Materials vs labor cost breakdown (CostBreakdown)"
+    )
 
 
 class PropertyData(BaseModel):
@@ -179,6 +186,13 @@ class RenovationEstimate(BaseModel):
     summary: str = Field(default="", description="Summary of renovation needs")
     floor_plan_ideas: FloorPlanAnalysis | None = Field(
         default=None, description="Layout optimisation ideas from floor plan analysis"
+    )
+    # New fields (feature extraction — typed as Any to avoid circular import)
+    composite_indices: Any | None = Field(
+        default=None, description="Composite indices (work scope, time, risk, complexity)"
+    )
+    user_preferences: Any | None = Field(
+        default=None, description="User preferences applied to this estimate"
     )
     disclaimer: str = Field(
         default=(
