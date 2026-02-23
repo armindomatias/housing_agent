@@ -12,7 +12,7 @@ Module layout:
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, Field
 
 from app.models.features.enums import (
     ApplianceType,
@@ -32,9 +32,40 @@ from app.models.features.enums import (
     WindowFrameMaterial,
 )
 
+def _coerce_condition_score(v: object) -> int | None:
+    """Coerce GPT output to int or None. Non-integer strings (e.g. 'not_visible') → None."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v)
+    if isinstance(v, str):
+        try:
+            return int(v)
+        except ValueError:
+            return None
+    return None
+
+
+def _validate_condition_range(v: int | None) -> int | None:
+    """Enforce 1-5 range only for non-None values."""
+    if v is not None and not (1 <= v <= 5):
+        raise ValueError(f"Condition score must be between 1 and 5, got {v}")
+    return v
+
+
 # Condition scores: 1 = needs full replacement, 5 = excellent / no work needed
 # None = GPT could not assess the feature (treated as "keep" by cost calculator)
-ConditionScore = Annotated[int | None, Field(ge=1, le=5, default=None)]
+# BeforeValidator coerces non-integer strings → None; AfterValidator enforces range.
+ConditionScore = Annotated[
+    int | None,
+    BeforeValidator(_coerce_condition_score),
+    AfterValidator(_validate_condition_range),
+    Field(default=None),
+]
 
 
 # ---------------------------------------------------------------------------

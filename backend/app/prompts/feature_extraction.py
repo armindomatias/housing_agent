@@ -68,7 +68,8 @@ FOTOGRAFIAS: {num_images}
 INSTRUÇÃO PRINCIPAL:
 Extrai APENAS o que consegues VER nas fotografias. Não deduzes nem inventas.
 Para cada campo, usa o valor que melhor descreve o que é visível.
-Quando não consegues avaliar, usa o valor "not_visible" ou "not_assessable" conforme disponível.
+Para campos enum: quando não consegues ver, usa o valor "not_visible" ou "not_assessable" conforme disponível no schema.
+Para campos de condição (inteiros 1-5): usa null quando não consegues avaliar — NUNCA uses texto como "not_visible".
 
 ESCALA DE CONDIÇÃO (1-5):
 1 = Necessita substituição completa (deteriorado, danificado, obsoleto)
@@ -94,7 +95,7 @@ IMPORTANTE:
 - Devolve APENAS JSON válido e completo segundo o schema
 - Todos os campos obrigatórios devem estar presentes
 - Usa os valores de enum exatamente como definidos no schema
-- condition scores devem ser inteiros entre 1 e 5; usa null quando não consegues avaliar
+- condition scores devem ser inteiros entre 1 e 5, ou null se não consegues avaliar (nunca texto)
 - estimated_area_m2 deve ser um número decimal (ex: 12.5) ou null"""
 
     return base

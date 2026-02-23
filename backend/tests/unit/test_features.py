@@ -216,6 +216,28 @@ class TestBathroomFeatures:
         )
         assert f.surfaces.wall_condition is None
 
+    def test_condition_score_string_not_visible_coerced_to_none(self):
+        """GPT returning 'not_visible' for a condition field must coerce to None, not raise."""
+        from app.models.features.enums import ShowerOrBath, VentilationType
+        f = BathroomFeatures(
+            surfaces=BathroomSurfacesModule(
+                wall_finish=WallFinish.AZULEJOS,
+                wall_condition=2,
+                floor_condition=3,
+                ceiling_condition="not_visible",  # type: ignore[arg-type]
+            ),
+            fixtures=BathroomFixturesModule(
+                sanitary_ware_condition=2,
+                shower_or_bath=ShowerOrBath.SHOWER,
+                shower_bath_condition="not_visible",  # type: ignore[arg-type]
+                bathroom_tile_condition=2,
+                ventilation_visible=VentilationType.NOT_VISIBLE,
+                window_frame_material=WindowFrameMaterial.ALUMINUM_SINGLE,
+            ),
+        )
+        assert f.surfaces.ceiling_condition is None
+        assert f.fixtures.shower_bath_condition is None
+
 
 # ---------------------------------------------------------------------------
 # CostBreakdown properties
