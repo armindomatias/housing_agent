@@ -64,8 +64,10 @@ from app.models.property import RenovationItem, RoomType
 logger = structlog.get_logger(__name__)
 
 
-def _action_from_condition(score: int) -> str:
-    """Return action string based on condition score (1-5)."""
+def _action_from_condition(score: int | None) -> str:
+    """Return action string based on condition score (1-5). None means unassessable → keep."""
+    if score is None:
+        return "keep"
     if score <= CONDITION_REPLACE_THRESHOLD:
         return "replace"
     if score <= CONDITION_REPAIR_THRESHOLD:
@@ -138,7 +140,8 @@ def _calculate_generic_room(
 
         # Floor
         floor_action = _action_from_condition(s.floor_condition)
-        surface_conditions.append(s.floor_condition)
+        if s.floor_condition is not None:
+            surface_conditions.append(s.floor_condition)
         if floor_action in ("replace", "repair"):
             key = "replace" if floor_action == "replace" else "repair"
             if key == "replace":
@@ -173,7 +176,8 @@ def _calculate_generic_room(
 
         # Walls
         wall_action = _action_from_condition(s.wall_condition)
-        surface_conditions.append(s.wall_condition)
+        if s.wall_condition is not None:
+            surface_conditions.append(s.wall_condition)
         if wall_action in ("replace", "repair"):
             wall_area = area_m2 * 2.5  # approx wall area from floor area
             if s.wall_finish == WallFinish.AZULEJOS and wall_action == "replace":
@@ -212,7 +216,8 @@ def _calculate_generic_room(
 
         # Ceiling
         ceil_action = _action_from_condition(s.ceiling_condition)
-        surface_conditions.append(s.ceiling_condition)
+        if s.ceiling_condition is not None:
+            surface_conditions.append(s.ceiling_condition)
         if ceil_action in ("replace", "repair"):
             if ceil_action == "replace":
                 r = COST_TABLE["ceiling"]["full_replaster"]
@@ -242,7 +247,8 @@ def _calculate_generic_room(
         f = features.fixtures
 
         # Windows
-        fixture_conditions.append(f.window_condition)
+        if f.window_condition is not None:
+            fixture_conditions.append(f.window_condition)
         win_action = _action_from_condition(f.window_condition)
         if win_action in ("replace", "repair") and f.window_count_estimate > 0:
             if win_action == "replace":
@@ -273,7 +279,8 @@ def _calculate_generic_room(
             ))
 
         # Door
-        fixture_conditions.append(f.door_condition)
+        if f.door_condition is not None:
+            fixture_conditions.append(f.door_condition)
         door_action = _action_from_condition(f.door_condition)
         if door_action in ("replace", "repair"):
             if door_action == "replace":
@@ -357,7 +364,7 @@ def _calculate_kitchen(
     # --- M1 Surfaces (same logic as generic) ---
     if features.surfaces:
         s = features.surfaces
-        surface_conditions.extend([s.floor_condition, s.wall_condition, s.ceiling_condition])
+        surface_conditions.extend(c for c in [s.floor_condition, s.wall_condition, s.ceiling_condition] if c is not None)
 
         # Floor
         floor_action = _action_from_condition(s.floor_condition)
@@ -440,7 +447,7 @@ def _calculate_kitchen(
     # --- M2 Fixtures ---
     if features.fixtures:
         f = features.fixtures
-        fixture_conditions.extend([f.cabinet_condition, f.countertop_condition, f.door_condition])
+        fixture_conditions.extend(c for c in [f.cabinet_condition, f.countertop_condition, f.door_condition] if c is not None)
 
         # Cabinets
         cab_action = _action_from_condition(f.cabinet_condition)
@@ -606,7 +613,7 @@ def _calculate_bathroom(
     # --- M1 Surfaces ---
     if features.surfaces:
         s = features.surfaces
-        surface_conditions.extend([s.wall_condition, s.floor_condition, s.ceiling_condition])
+        surface_conditions.extend(c for c in [s.wall_condition, s.floor_condition, s.ceiling_condition] if c is not None)
 
         # Wall tiles (bathroom)
         wall_action = _action_from_condition(s.wall_condition)
@@ -676,7 +683,7 @@ def _calculate_bathroom(
     # --- M2 Fixtures ---
     if features.fixtures:
         f = features.fixtures
-        fixture_conditions.extend([f.sanitary_ware_condition, f.shower_bath_condition, f.bathroom_tile_condition])
+        fixture_conditions.extend(c for c in [f.sanitary_ware_condition, f.shower_bath_condition, f.bathroom_tile_condition] if c is not None)
 
         # Sanitary ware
         san_action = _action_from_condition(f.sanitary_ware_condition)

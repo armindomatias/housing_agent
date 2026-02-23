@@ -189,6 +189,33 @@ class TestBathroomFeatures:
         f = BathroomFeatures()
         assert f.room_type == "casa_de_banho"
 
+    def test_ventilation_not_visible_parses(self):
+        """VentilationType.NOT_VISIBLE ('not_visible') must be accepted."""
+        from app.models.features.enums import ShowerOrBath, VentilationType
+        f = BathroomFeatures(
+            fixtures=BathroomFixturesModule(
+                sanitary_ware_condition=3,
+                shower_or_bath=ShowerOrBath.SHOWER,
+                shower_bath_condition=3,
+                bathroom_tile_condition=3,
+                ventilation_visible=VentilationType.NOT_VISIBLE,
+                window_frame_material=WindowFrameMaterial.ALUMINUM_SINGLE,
+            ),
+        )
+        assert f.fixtures.ventilation_visible == VentilationType.NOT_VISIBLE
+
+    def test_condition_score_none_accepted(self):
+        """None is a valid condition score (unassessable feature)."""
+        f = BathroomFeatures(
+            surfaces=BathroomSurfacesModule(
+                wall_finish=WallFinish.AZULEJOS,
+                wall_condition=None,
+                floor_condition=None,
+                ceiling_condition=None,
+            ),
+        )
+        assert f.surfaces.wall_condition is None
+
 
 # ---------------------------------------------------------------------------
 # CostBreakdown properties

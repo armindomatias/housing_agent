@@ -17,7 +17,7 @@ def setup_logging(debug: bool = False) -> None:
         debug: If True, use ConsoleRenderer; otherwise use JSONRenderer.
     """
 
-    # Configuring what will show up in the logging 
+    # Configuring what will show up in the logging
     shared_processors: list = [
         structlog.contextvars.merge_contextvars, # request_id, property_url (from middleware)
         structlog.stdlib.add_log_level,

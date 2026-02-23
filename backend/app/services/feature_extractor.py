@@ -37,7 +37,9 @@ from app.services.openai_client import get_openai_client
 logger = structlog.get_logger(__name__)
 
 # Alert if input exceeds this many tokens per room
-TOKEN_ALERT_THRESHOLD = 2000
+# The structured prompt + injected JSON schema is ~3500-4000 tokens by design;
+# threshold is set above that to catch genuinely runaway prompts.
+TOKEN_ALERT_THRESHOLD = 8000
 
 
 class FeatureExtractorService:

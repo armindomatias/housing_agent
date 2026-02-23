@@ -92,7 +92,7 @@ class VentilationType(str, Enum):
 
     WINDOW = "window"
     EXTRACTOR_FAN = "extractor_fan"
-    NONE_VISIBLE = "none_visible"
+    NOT_VISIBLE = "not_visible"
     NOT_ASSESSABLE = "not_assessable"
 
 

@@ -94,7 +94,7 @@ IMPORTANTE:
 - Devolve APENAS JSON válido e completo segundo o schema
 - Todos os campos obrigatórios devem estar presentes
 - Usa os valores de enum exatamente como definidos no schema
-- condition scores devem ser inteiros entre 1 e 5
+- condition scores devem ser inteiros entre 1 e 5; usa null quando não consegues avaliar
 - estimated_area_m2 deve ser um número decimal (ex: 12.5) ou null"""
 
     return base

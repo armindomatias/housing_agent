@@ -191,6 +191,9 @@ class TestActionFromCondition:
     def test_score_5_is_keep(self):
         assert _action_from_condition(5) == "keep"
 
+    def test_none_is_keep(self):
+        assert _action_from_condition(None) == "keep"
+
 
 # ---------------------------------------------------------------------------
 # _scope_from_avg
@@ -354,6 +357,72 @@ class TestCalculateCosts:
             for item in result.line_items:
                 assert item.cost_min >= 0
                 assert item.cost_max >= 0
+
+
+# ---------------------------------------------------------------------------
+# None condition fields (GPT returned null for unassessable features)
+# ---------------------------------------------------------------------------
+
+
+class TestNoneConditionFields:
+    def test_kitchen_with_null_countertop_condition_skips_countertop(self):
+        """countertop_condition=None → no countertop cost line item."""
+        from app.models.features.enums import CountertopMaterial
+        features = KitchenFeatures(
+            fixtures=KitchenFixturesModule(
+                window_frame_material=WindowFrameMaterial.PVC_DOUBLE,
+                cabinet_condition=None,
+                countertop_material=CountertopMaterial.LAMINATE,
+                countertop_condition=None,
+                appliances_visible=[],
+                door_condition=None,
+            ),
+        )
+        result = calculate_costs(features, RoomType.KITCHEN, STD_PREFS, DEFAULT_CONTEXT)
+        categories = {item.category for item in result.line_items}
+        assert "kitchen_countertop" not in categories
+        assert "kitchen_cabinets" not in categories
+
+    def test_bathroom_with_null_conditions_produces_no_fixture_items(self):
+        """All fixture conditions None → no fixture cost line items."""
+        from app.models.features.enums import VentilationType
+        features = BathroomFeatures(
+            fixtures=BathroomFixturesModule(
+                sanitary_ware_condition=None,
+                shower_or_bath=ShowerOrBath.SHOWER,
+                shower_bath_condition=None,
+                bathroom_tile_condition=None,
+                ventilation_visible=VentilationType.NOT_VISIBLE,
+                window_frame_material=WindowFrameMaterial.ALUMINUM_SINGLE,
+            ),
+        )
+        result = calculate_costs(features, RoomType.BATHROOM, STD_PREFS, DEFAULT_CONTEXT)
+        fixture_categories = {"bathroom_sanitary", "bathroom_shower_bath"}
+        assert not fixture_categories.intersection({item.category for item in result.line_items})
+
+    def test_null_conditions_produce_nonnegative_costs(self):
+        """None condition fields must never cause errors or negative costs."""
+        from app.models.features.enums import CountertopMaterial
+        features = KitchenFeatures(
+            surfaces=KitchenSurfacesModule(
+                floor_material=FloorMaterial.CERAMIC_TILE,
+                floor_condition=None,
+                wall_finish=WallFinish.PAINT,
+                wall_condition=None,
+                ceiling_condition=None,
+            ),
+            fixtures=KitchenFixturesModule(
+                window_frame_material=WindowFrameMaterial.PVC_DOUBLE,
+                cabinet_condition=None,
+                countertop_material=CountertopMaterial.GRANITE,
+                countertop_condition=None,
+                appliances_visible=[],
+                door_condition=None,
+            ),
+        )
+        result = calculate_costs(features, RoomType.KITCHEN, STD_PREFS, DEFAULT_CONTEXT)
+        assert result.cost_breakdown.total_min >= 0
+        assert result.cost_breakdown.total_max >= 0
 
 
 # ---------------------------------------------------------------------------

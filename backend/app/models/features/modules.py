@@ -33,7 +33,8 @@ from app.models.features.enums import (
 )
 
 # Condition scores: 1 = needs full replacement, 5 = excellent / no work needed
-ConditionScore = Annotated[int, Field(ge=1, le=5)]
+# None = GPT could not assess the feature (treated as "keep" by cost calculator)
+ConditionScore = Annotated[int | None, Field(ge=1, le=5, default=None)]
 
 
 # ---------------------------------------------------------------------------
