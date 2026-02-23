@@ -16,10 +16,11 @@ from typing import AsyncGenerator
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import acreate_client
 from supabase._async.client import AsyncClient as AsyncSupabaseClient
 
+from app.agents.orchestrator import build_orchestrator_graph
 from app.api.v1.analyze import router as analyze_router
+from app.api.v1.chat import router as chat_router
 from app.config import get_settings
 from app.constants import API_TITLE, API_VERSION
 from app.graphs.main_graph import build_renovation_graph
@@ -29,6 +30,7 @@ from app.services.idealista import IdealistaService
 from app.services.image_classifier import ImageClassifierService
 from app.services.image_downloader import ImageDownloaderService
 from app.services.renovation_estimator import RenovationEstimatorService
+from supabase import acreate_client
 
 # Get settings before logging setup so we know the debug flag
 settings = get_settings()
@@ -110,6 +112,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     _app.state.estimator_service = estimator_service
     _app.state.graph = graph
 
+    # Compile orchestrator graph once at startup
+    orchestrator_graph = build_orchestrator_graph(settings)
+    _app.state.orchestrator_graph = orchestrator_graph
+    logger.info("orchestrator_graph_compiled")
+
     logger.info("services_initialized")
 
     yield
@@ -147,6 +154,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(analyze_router, prefix="/api/v1")
+app.include_router(chat_router, prefix="/api/v1")
 
 
 @app.get("/")
