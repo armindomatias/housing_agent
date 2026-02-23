@@ -152,3 +152,44 @@ API_VERSION = "0.1.0"
 
 # --- Pipeline ---
 PIPELINE_TOTAL_STEPS = 5
+
+# --- Orchestrator: DIY skill categories ---
+# These labels correspond to cost line item categories in the cost calculator.
+# When a user's diy_skills[] contains a value, labor cost = 0 for that category.
+DIY_SKILL_CATEGORIES: list[str] = [
+    "painting",
+    "demolition",
+    "flooring_laminate",
+    "flooring_tile",
+    "kitchen_removal",
+    "kitchen_install",
+    "bathroom_removal",
+    "plumbing_basic",
+    "electrical_basic",
+    "tiling",
+]
+
+# --- Orchestrator: User profile sections ---
+# Order matters: earlier sections are collected first in the onboarding flow.
+PROFILE_SECTIONS: list[str] = [
+    "fiscal",
+    "budget",
+    "renovation",
+    "preferences",
+    "goals",
+]
+
+# --- Orchestrator: Portfolio item status values ---
+PORTFOLIO_STATUS_VALUES: list[str] = [
+    "saved",
+    "analyzing",
+    "analyzed",
+    "archived",
+]
+
+# --- Orchestrator: Analysis types ---
+ANALYSIS_TYPES: list[str] = [
+    "renovation",
+    "fiscal",
+    "comparison",
+]

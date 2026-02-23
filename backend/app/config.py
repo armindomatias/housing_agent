@@ -48,6 +48,28 @@ class ApifyConfig(BaseModel):
     request_timeout_seconds: float = 120.0
 
 
+class OrchestratorConfig(BaseModel):
+    """Orchestrator agent configuration.
+
+    Env-overridable via ORCHESTRATOR__KEY format, e.g.:
+        ORCHESTRATOR__MODEL=gpt-4o-mini
+        ORCHESTRATOR__SESSION_TIMEOUT_MINUTES=60
+        ORCHESTRATOR__CONTEXT_BUDGET_TOKENS=4000
+    """
+
+    model: str = "gpt-4o"
+    # Minutes of inactivity before a conversation session is considered ended
+    session_timeout_minutes: int = 30
+    # Max tokens in the system context message before auto-demoting loaded items
+    context_budget_tokens: int = 4000
+    # Minimum lines to always load fully (skip partial read)
+    min_lines_for_partial_read: int = 20
+    # Conversation summary generation model (cheaper, faster)
+    summary_model: str = "gpt-4o-mini"
+    # Messages before triggering async conversation summary
+    summary_trigger_message_count: int = 20
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -87,6 +109,7 @@ class Settings(BaseSettings):
     openai_config: OpenAIConfig = Field(default_factory=OpenAIConfig)
     image_processing: ImageProcessingConfig = Field(default_factory=ImageProcessingConfig)
     apify: ApifyConfig = Field(default_factory=ApifyConfig)
+    orchestrator: OrchestratorConfig = Field(default_factory=OrchestratorConfig)
 
 
 @lru_cache
