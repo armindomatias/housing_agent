@@ -22,3 +22,6 @@ docs/
 
 # others
 .ruff_cache/
+
+# Git worktrees
+.worktrees/
