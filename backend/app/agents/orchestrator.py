@@ -20,6 +20,7 @@ Routing:
 
 import structlog
 from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -44,13 +45,13 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def hydrate_context_node(state: OrchestratorState, config: dict) -> dict:
+async def hydrate_context_node(state: OrchestratorState, config: RunnableConfig) -> dict:
     """
     Runs once at turn start. Loads user context from Supabase and builds
     the initial knowledge base. Creates a new conversation row if needed.
     Injects the system prompt + initial context block into messages.
     """
-    supabase = config.get("configurable", {}).get("supabase")
+    supabase = (config.get("configurable") or {}).get("supabase")
     user_id = state["user_id"]
     conversation_id = state.get("conversation_id") or ""
 
@@ -115,12 +116,12 @@ async def hydrate_context_node(state: OrchestratorState, config: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def agent_node(state: OrchestratorState, config: dict) -> dict:
+async def agent_node(state: OrchestratorState, config: RunnableConfig) -> dict:
     """
     LLM ReAct node. Bound with all orchestrator tools.
     The LLM decides to call tools or produce a final response.
     """
-    cfg = config.get("configurable", {})
+    cfg = config.get("configurable") or {}
     model_name = cfg.get("orchestrator_model", "gpt-4o")
     openai_api_key = cfg.get("openai_api_key", "")
 
@@ -172,7 +173,7 @@ def reflect_node(state: OrchestratorState) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def post_process_node(state: OrchestratorState, config: dict) -> dict:
+async def post_process_node(state: OrchestratorState, config: RunnableConfig) -> dict:
     """
     Runs after the agent produces its final response.
     - Persists new messages to Supabase
@@ -181,7 +182,7 @@ async def post_process_node(state: OrchestratorState, config: dict) -> dict:
     - Updates portfolio is_active if focus changed
     - Triggers async conversation summary if message threshold reached
     """
-    supabase = config.get("configurable", {}).get("supabase")
+    supabase = (config.get("configurable") or {}).get("supabase")
     conversation_id = state.get("conversation_id") or ""
 
     if supabase and conversation_id:
