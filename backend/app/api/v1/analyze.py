@@ -21,6 +21,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.auth import CurrentUser
 from app.graphs.state import create_initial_state
 from app.models.property import RenovationEstimate
+from app.services.analysis_persistence import persist_analysis_to_db
 
 logger = structlog.get_logger(__name__)
 
@@ -42,25 +43,28 @@ class AnalyzeResponse(BaseModel):
 
 
 async def stream_analysis(
-    url: str, user_id: str, graph: Any
+    url: str, user_id: str, graph: Any, supabase: Any = None
 ) -> AsyncGenerator[str, None]:
     """
     Generator that streams analysis events as SSE.
 
     Runs the pre-compiled LangGraph and yields each stream event as it occurs.
+    After streaming completes, persists the result to the database.
 
     Args:
         url: Idealista URL to analyze
         user_id: Optional user ID
         graph: Pre-compiled LangGraph instance from app.state
+        supabase: Optional Supabase client for DB persistence
 
     Yields:
         SSE-formatted event strings
     """
     initial_state = create_initial_state(url, user_id)
 
-    # Track which events we've already sent
+    # Track which events we've already sent, and the last full state for DB save
     sent_events = 0
+    last_state: dict | None = None
 
     try:
         async for state in graph.astream(initial_state):
@@ -75,6 +79,8 @@ async def stream_analysis(
                 if len(state) == 1:
                     # State is wrapped in node name dict
                     actual_state = list(state.values())[0]
+
+                last_state = actual_state  # keep the latest full state for DB save
 
                 events = actual_state.get("stream_events", [])
                 new_events = events[sent_events:]
@@ -97,6 +103,14 @@ async def stream_analysis(
             "total_steps": 5,
         }
         yield json.dumps(error_event, ensure_ascii=False)
+        return
+
+    # Persist to DB after streaming completes
+    if supabase and last_state:
+        estimate = last_state.get("estimate")
+        if estimate is not None:
+            estimate_dict = estimate.model_dump() if hasattr(estimate, "model_dump") else estimate
+            await persist_analysis_to_db(supabase, url, user_id, estimate_dict)
 
 
 @router.post("", response_class=EventSourceResponse)
@@ -127,8 +141,9 @@ async def analyze_property_stream(
     """
     structlog.contextvars.bind_contextvars(property_url=str(body.url), user_id=user.id)
     graph = request.app.state.graph
+    supabase = getattr(request.app.state, "supabase", None)
     return EventSourceResponse(
-        stream_analysis(str(body.url), user.id, graph),
+        stream_analysis(str(body.url), user.id, graph, supabase),
         media_type="text/event-stream",
     )
 
