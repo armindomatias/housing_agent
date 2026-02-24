@@ -25,8 +25,8 @@ async def get_user_profile(
     client: AsyncSupabaseClient, user_id: str
 ) -> dict | None:
     """Fetch full user profile row. Returns None if not found."""
-    response = await client.table("user_profiles").select("*").eq("id", user_id).single().execute()
-    return response.data
+    response = await client.table("user_profiles").select("*").eq("id", user_id).maybe_single().execute()
+    return response.data if response else None
 
 
 async def upsert_user_profile(
@@ -112,7 +112,7 @@ async def get_property_by_idealista_id(
         await client.table("properties")
         .select("*")
         .eq("idealista_id", idealista_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     return response.data
@@ -145,7 +145,7 @@ async def get_portfolio_item(
         .select("*")
         .eq("user_id", user_id)
         .eq("property_id", property_id)
-        .single()
+        .maybe_single()
         .execute()
     )
     return response.data
@@ -158,15 +158,20 @@ async def create_portfolio_item(
     nickname: str | None = None,
     index_summary: str | None = None,
 ) -> dict:
-    """Add a property to a user's portfolio."""
+    """Add a property to a user's portfolio. Upserts on (user_id, property_id)."""
     data = {
         "user_id": user_id,
         "property_id": property_id,
         "nickname": nickname,
         "index_summary": index_summary,
         "status": "saved",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    response = await client.table("portfolio_items").insert(data).execute()
+    response = (
+        await client.table("portfolio_items")
+        .upsert(data, on_conflict="user_id,property_id")
+        .execute()
+    )
     return response.data[0]
 
 
