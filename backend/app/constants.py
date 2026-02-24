@@ -6,6 +6,16 @@ need env-var overrides. For operational parameters that vary per environment
 (timeouts, concurrency limits, max_tokens), see config.py.
 """
 
+from app.models.features.enums import (
+    ConstructionEra,
+    CountertopMaterial,
+    FinishLevel,
+    FloorMaterial,
+    LocationCostTier,
+    WindowFrameMaterial,
+    WorkScope,
+)
+from app.models.features.outputs import CostRange
 from app.models.property import RoomCondition, RoomType
 
 # --- Fallback renovation costs (EUR) when GPT analysis fails ---
@@ -193,3 +203,232 @@ ANALYSIS_TYPES: list[str] = [
     "fiscal",
     "comparison",
 ]
+# =============================================================================
+# FEATURE EXTRACTION COST TABLES
+# Prices in EUR, Portugal market 2024/2025.
+# Nested dict: COST_TABLE[category][action][material_or_key] -> CostRange
+# Unit: "m2" | "unit" | "room" | "linear_m"
+# =============================================================================
+
+COST_TABLE: dict[str, dict] = {
+    "flooring": {
+        "replace": {
+            FloorMaterial.HARDWOOD: CostRange(min=50, max=80, unit="m2"),
+            FloorMaterial.LAMINATE: CostRange(min=20, max=35, unit="m2"),
+            FloorMaterial.CERAMIC_TILE: CostRange(min=25, max=50, unit="m2"),
+            FloorMaterial.VINYL: CostRange(min=15, max=30, unit="m2"),
+            FloorMaterial.MARBLE: CostRange(min=80, max=150, unit="m2"),
+            FloorMaterial.STONE: CostRange(min=60, max=120, unit="m2"),
+            FloorMaterial.HYDRAULIC_TILE: CostRange(min=40, max=80, unit="m2"),
+            FloorMaterial.CARPET: CostRange(min=15, max=30, unit="m2"),
+            # Default when material not visible
+            FloorMaterial.NOT_VISIBLE: CostRange(min=20, max=50, unit="m2"),
+        },
+        "refinish": {
+            FloorMaterial.HARDWOOD: CostRange(min=15, max=30, unit="m2"),
+        },
+        "repair": CostRange(min=5, max=15, unit="m2"),
+    },
+    "walls": {
+        "repaint": CostRange(min=8, max=15, unit="m2"),
+        "strip_and_replaster": CostRange(min=25, max=45, unit="m2"),
+        "remove_azulejos": CostRange(min=40, max=60, unit="m2"),
+        "install_azulejos": CostRange(min=30, max=60, unit="m2"),
+        "repair": CostRange(min=8, max=20, unit="m2"),
+    },
+    "ceiling": {
+        "repaint": CostRange(min=6, max=12, unit="m2"),
+        "repair_and_repaint": CostRange(min=15, max=30, unit="m2"),
+        "full_replaster": CostRange(min=25, max=45, unit="m2"),
+    },
+    "windows": {
+        "replace": {
+            WindowFrameMaterial.ALUMINUM_SINGLE: CostRange(min=300, max=600, unit="unit"),
+            WindowFrameMaterial.ALUMINUM_DOUBLE: CostRange(min=400, max=700, unit="unit"),
+            WindowFrameMaterial.PVC_DOUBLE: CostRange(min=400, max=800, unit="unit"),
+            WindowFrameMaterial.WOOD: CostRange(min=500, max=1000, unit="unit"),
+            WindowFrameMaterial.NOT_VISIBLE: CostRange(min=350, max=700, unit="unit"),
+        },
+        "repair": CostRange(min=50, max=150, unit="unit"),
+    },
+    "doors": {
+        "replace": CostRange(min=150, max=400, unit="unit"),
+        "repair_and_paint": CostRange(min=30, max=80, unit="unit"),
+    },
+    "kitchen_cabinets": {
+        "replace_full": CostRange(min=3000, max=15000, unit="room"),
+        "reface": CostRange(min=800, max=2500, unit="room"),
+        "repair": CostRange(min=200, max=600, unit="room"),
+    },
+    "kitchen_countertop": {
+        "replace": {
+            CountertopMaterial.GRANITE: CostRange(min=800, max=2000, unit="linear_m"),
+            CountertopMaterial.MARBLE: CostRange(min=1000, max=2500, unit="linear_m"),
+            CountertopMaterial.LAMINATE: CostRange(min=200, max=500, unit="linear_m"),
+            CountertopMaterial.QUARTZ: CostRange(min=700, max=1800, unit="linear_m"),
+            CountertopMaterial.CERAMIC_TILE: CostRange(min=300, max=700, unit="linear_m"),
+            CountertopMaterial.STAINLESS_STEEL: CostRange(min=600, max=1500, unit="linear_m"),
+            CountertopMaterial.NOT_VISIBLE: CostRange(min=400, max=1200, unit="linear_m"),
+        },
+        "repair": CostRange(min=100, max=300, unit="room"),
+    },
+    "kitchen_appliances": {
+        "full_set": CostRange(min=2000, max=8000, unit="room"),
+    },
+    "bathroom_sanitary": {
+        "replace_full_set": CostRange(min=500, max=3000, unit="room"),
+        "replace_toilet": CostRange(min=150, max=500, unit="unit"),
+        "replace_sink": CostRange(min=100, max=400, unit="unit"),
+        "repair": CostRange(min=50, max=200, unit="room"),
+    },
+    "bathroom_shower_bath": {
+        "replace_shower": CostRange(min=400, max=1500, unit="unit"),
+        "replace_bathtub": CostRange(min=300, max=1200, unit="unit"),
+        "replace_walk_in": CostRange(min=800, max=3000, unit="unit"),
+        "reseal": CostRange(min=50, max=150, unit="unit"),
+    },
+    "bathroom_tiles": {
+        "replace_wall_tiles": CostRange(min=30, max=60, unit="m2"),
+        "repair_grout": CostRange(min=5, max=15, unit="m2"),
+    },
+    "electrical": {
+        "rewire_room": CostRange(min=300, max=800, unit="room"),
+        "rewire_property": CostRange(min=3000, max=8000, unit="room"),
+        "update_outlets": CostRange(min=50, max=150, unit="unit"),
+    },
+    "plumbing": {
+        "replace_room": CostRange(min=500, max=2000, unit="room"),
+        "replace_property": CostRange(min=3000, max=10000, unit="room"),
+        "repair_visible": CostRange(min=100, max=500, unit="room"),
+    },
+}
+
+# --- Labor ratios per work category ---
+# labor_ratio: fraction of total cost that is labor.
+# When diy=True, labor costs are stripped (materials_only = total * (1 - ratio)).
+LABOR_RATIOS: dict[str, float] = {
+    "flooring_replace": 0.50,
+    "flooring_refinish": 0.65,
+    "flooring_repair": 0.70,
+    "walls_repaint": 0.60,
+    "walls_replaster": 0.55,
+    "walls_remove_azulejos": 0.55,
+    "walls_install_azulejos": 0.55,
+    "walls_repair": 0.65,
+    "ceiling_repaint": 0.60,
+    "ceiling_repair": 0.60,
+    "ceiling_replaster": 0.55,
+    "windows_replace": 0.40,
+    "windows_repair": 0.60,
+    "doors_replace": 0.40,
+    "doors_repair": 0.65,
+    "kitchen_cabinets_replace": 0.35,
+    "kitchen_cabinets_reface": 0.45,
+    "kitchen_cabinets_repair": 0.60,
+    "kitchen_countertop_replace": 0.45,
+    "kitchen_countertop_repair": 0.65,
+    "kitchen_appliances_install": 0.20,
+    "bathroom_sanitary_replace": 0.50,
+    "bathroom_sanitary_repair": 0.65,
+    "bathroom_shower_replace": 0.45,
+    "bathroom_shower_reseal": 0.75,
+    "bathroom_tiles_replace": 0.55,
+    "bathroom_tiles_repair": 0.70,
+    "electrical_rewire": 0.65,
+    "electrical_update": 0.70,
+    "plumbing_replace": 0.70,
+    "plumbing_repair": 0.75,
+}
+
+# --- Finish level cost multipliers ---
+FINISH_LEVEL_MULTIPLIERS: dict[FinishLevel, float] = {
+    FinishLevel.ECONOMICO: 0.7,
+    FinishLevel.STANDARD: 1.0,
+    FinishLevel.PREMIUM: 1.5,
+}
+
+# --- Room area weights (fraction of total usable area) ---
+# Used to estimate room area when GPT doesn't provide it and no usable_area is available.
+ROOM_AREA_WEIGHTS: dict[RoomType, float] = {
+    RoomType.KITCHEN: 0.14,
+    RoomType.LIVING_ROOM: 0.25,
+    RoomType.BEDROOM: 0.16,
+    RoomType.BATHROOM: 0.07,
+    RoomType.HALLWAY: 0.08,
+    RoomType.BALCONY: 0.06,
+    RoomType.GARAGE: 0.15,
+    RoomType.STORAGE: 0.05,
+}
+
+# --- Default fallback room area (m2) when all else fails ---
+DEFAULT_ROOM_AREA_M2 = 10.0
+
+# --- Regional cost multipliers ---
+# Applied on top of base COST_TABLE prices.
+LOCATION_COST_MULTIPLIERS: dict[LocationCostTier, float] = {
+    LocationCostTier.LISBOA: 1.15,
+    LocationCostTier.PORTO: 1.10,
+    LocationCostTier.ALGARVE: 1.10,
+    LocationCostTier.LITORAL: 1.0,
+    LocationCostTier.INTERIOR: 0.85,
+    LocationCostTier.ILHAS: 1.20,
+}
+
+# --- Floor accessibility labor surcharges ---
+# Additional multiplier on labor cost for high-floor no-elevator situations.
+FLOOR_ACCESSIBILITY_SURCHARGES: dict[str, float] = {
+    "ground_floor": 0.0,
+    "low_with_elevator": 0.0,
+    "high_with_elevator": 0.03,
+    "low_without_elevator": 0.05,
+    "high_without_elevator": 0.10,
+}
+
+# --- Construction era MEP risk rules ---
+# Maps era → whether rewiring / replumbing is likely needed.
+# Used to derive estimated_rewiring_needed and estimated_replumbing_needed.
+ERA_REWIRING_LIKELY: dict[ConstructionEra, bool] = {
+    ConstructionEra.PRE_1950: True,
+    ConstructionEra.ERA_1950_1970: True,
+    ConstructionEra.ERA_1970_1990: True,
+    ConstructionEra.ERA_1990_2005: False,
+    ConstructionEra.POST_2005: False,
+    ConstructionEra.UNKNOWN: False,
+}
+
+ERA_REPLUMBING_LIKELY: dict[ConstructionEra, bool] = {
+    ConstructionEra.PRE_1950: True,
+    ConstructionEra.ERA_1950_1970: True,
+    ConstructionEra.ERA_1970_1990: False,
+    ConstructionEra.ERA_1990_2005: False,
+    ConstructionEra.POST_2005: False,
+    ConstructionEra.UNKNOWN: False,
+}
+
+# --- Condition score thresholds for action decisions ---
+# Scores are 1-5: 1=needs full replacement, 5=excellent/no work needed.
+CONDITION_REPLACE_THRESHOLD = 2  # score <= 2 → replace
+CONDITION_REPAIR_THRESHOLD = 3   # score == 3 → repair/refurbish
+# score >= 4 → keep (no work)
+
+# --- Work scope thresholds ---
+# Average condition score for a module → WorkScope classification.
+WORK_SCOPE_FROM_AVG_CONDITION: list[tuple[float, WorkScope]] = [
+    (1.5, WorkScope.FULL_RENOVATION),
+    (2.5, WorkScope.REPLACE),
+    (3.5, WorkScope.REFURBISH),
+    (4.5, WorkScope.REPAIR),
+    (5.0, WorkScope.NONE),
+]
+
+# --- Time estimates per work scope (weeks) ---
+TIME_WEEKS_PER_SCOPE: dict[WorkScope, tuple[int, int]] = {
+    WorkScope.NONE: (0, 0),
+    WorkScope.REPAIR: (1, 2),
+    WorkScope.REFURBISH: (2, 4),
+    WorkScope.REPLACE: (3, 6),
+    WorkScope.FULL_RENOVATION: (4, 8),
+}
+
+# --- Countertop default linear meters (for cost calculation when area is known) ---
+COUNTERTOP_DEFAULT_LINEAR_M = 3.0

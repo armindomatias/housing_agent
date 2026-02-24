@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     # Image Pipeline
     use_base64_images: bool = Field(default=True)  # Download images once and pass as base64
 
+    # Feature extraction tier (1 = M1-M3 surfaces/fixtures/MEP; 2 = adds M4/M5)
+    feature_tier: int = Field(default=1)
+
     # App Settings
     debug: bool = False
     cors_origins: list[str] = ["http://localhost:3000"]

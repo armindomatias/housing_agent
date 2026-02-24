@@ -98,7 +98,7 @@ class IdealistaService:
             results.append(json.loads(stripped))
         return results
 
-    # Method that calls the Apify Actor 
+    # Method that calls the Apify Actor
     async def _request_with_retry(self, url: str, payload: dict) -> httpx.Response:
         """
         POST to the given URL with retry logic for transient failures.
@@ -154,7 +154,7 @@ class IdealistaService:
 
         raise last_exception  # type: ignore[misc]
 
-    # Method that controls the whole process of scraping and parsing the data 
+    # Method that controls the whole process of scraping and parsing the data
     async def scrape_property(self, url: str) -> PropertyData:
         """
         Scrape property data from an Idealista listing.
