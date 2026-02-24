@@ -64,6 +64,13 @@ async def hydrate_context_node(state: OrchestratorState, config: RunnableConfig)
         except Exception:
             logger.exception("hydrate_context_knowledge_build_failed", user_id=user_id)
 
+        # Auto-create a minimal profile for first-time users (no profile → empty knowledge)
+        if not knowledge:
+            try:
+                await db.upsert_user_profile(supabase, user_id, {})
+            except Exception:
+                logger.exception("hydrate_context_auto_create_profile_failed", user_id=user_id)
+
     # Create conversation row if this is a new session
     if not conversation_id and supabase:
         try:
@@ -71,8 +78,8 @@ async def hydrate_context_node(state: OrchestratorState, config: RunnableConfig)
             conversation_id = conv["id"]
         except Exception:
             logger.exception("hydrate_context_create_conversation_failed", user_id=user_id)
-            import uuid
-            conversation_id = str(uuid.uuid4())
+            # Leave conversation_id empty — downstream saves will be skipped
+            # (do NOT fall back to a fake UUID; that causes FK violations)
 
     # Build the initial context block
     working_state: OrchestratorState = {
@@ -204,7 +211,7 @@ async def post_process_node(state: OrchestratorState, config: RunnableConfig) ->
         try:
             await db.increment_conversation_message_count(supabase, conversation_id)
         except Exception:
-            pass  # non-critical
+            logger.warning("post_process_increment_message_count_failed", conversation_id=conversation_id)
 
     # Demote knowledge entries not referenced recently
     # We approximate "referenced" by checking which keys appeared in tool call args
