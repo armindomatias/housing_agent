@@ -52,10 +52,10 @@ function HomeContent() {
   const showLanding = !isAnalyzing && !result;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className={`${result ? "h-screen overflow-hidden" : "min-h-screen"} flex flex-col`}>
       <Navbar />
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 min-h-0 flex flex-col">
         {/* Hero section */}
         {showLanding && (
           <section className="bg-orange-500 py-20 px-4">
@@ -118,19 +118,19 @@ function HomeContent() {
             <div
               className={
                 chatOpen
-                  ? "flex-1 min-w-0 overflow-y-auto px-4 py-10 lg:pr-0"
+                  ? "flex-1 min-w-0 overflow-y-auto px-4 py-10"
                   : "flex-1 min-w-0 overflow-y-auto px-4 py-10"
               }
             >
-              <div
-                className={
-                  chatOpen
-                    ? "max-w-4xl mx-auto lg:mx-0 lg:max-w-none"
-                    : "max-w-4xl mx-auto"
-                }
-              >
+              <div className="max-w-3xl mx-auto">
                 <ResultsDisplay estimate={result} onReset={handleReset} />
               </div>
+              <footer className="mt-10 border-t border-border py-6 px-4">
+                <p className="text-center text-sm text-muted-foreground">
+                  Rehabify fornece estimativas indicativas. Para decisões de
+                  investimento, consulte profissionais qualificados.
+                </p>
+              </footer>
             </div>
 
             {/* Chat panel — side panel on desktop (lg+) */}
@@ -154,12 +154,14 @@ function HomeContent() {
         </Button>
       )}
 
-      <footer className={`border-t border-border py-6 px-4 ${result ? "hidden lg:block" : ""}`}>
-        <p className="text-center text-sm text-muted-foreground">
-          Rehabify fornece estimativas indicativas. Para decisões de
-          investimento, consulte profissionais qualificados.
-        </p>
-      </footer>
+      {!result && (
+        <footer className="border-t border-border py-6 px-4">
+          <p className="text-center text-sm text-muted-foreground">
+            Rehabify fornece estimativas indicativas. Para decisões de
+            investimento, consulte profissionais qualificados.
+          </p>
+        </footer>
+      )}
     </div>
   );
 }
