@@ -106,7 +106,7 @@ class Settings(BaseSettings):
 
     # App Settings
     debug: bool = False
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: list[str] = ["http://localhost:3000", "https://housing-agent-36yr.vercel.app/"]
 
     # Nested config groups (env-overridable via SECTION__KEY format)
     openai_config: OpenAIConfig = Field(default_factory=OpenAIConfig)
