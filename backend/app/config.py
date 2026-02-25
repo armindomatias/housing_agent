@@ -16,6 +16,7 @@ from functools import lru_cache
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ENV = os.getenv("ENV", "development") 
 
 class OpenAIConfig(BaseModel):
     """OpenAI API call parameters."""
@@ -110,7 +111,6 @@ class Settings(BaseSettings):
     debug: bool = False
     
     # Dynamically set cors_origins based on environment
-    ENV = os.getenv("ENV", "development")  # add this
     if ENV == "production":
         cors_origins: list[str] = ["https://housing-agent-36yr.vercel.app/", "https://housing-agent-36yr.vercel.app"]
     else:
