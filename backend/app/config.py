@@ -9,6 +9,8 @@ env-overridable via the double-underscore delimiter, e.g.:
     APIFY__MAX_RETRIES=5
 """
 
+import os
+
 from functools import lru_cache
 
 from pydantic import BaseModel, Field
@@ -106,7 +108,15 @@ class Settings(BaseSettings):
 
     # App Settings
     debug: bool = False
-    cors_origins: list[str] = ["http://localhost:3000", "https://housing-agent-36yr.vercel.app/"]
+    
+    # Dynamically set cors_origins based on environment
+    ENV = os.getenv("ENV", "development")  # add this
+    if ENV == "production":
+        cors_origins: list[str] = ["https://housing-agent-36yr.vercel.app/", "https://housing-agent-36yr.vercel.app"]
+    else:
+        cors_origins: list[str] = [
+            "http://localhost:3000",
+        ]
 
     # Nested config groups (env-overridable via SECTION__KEY format)
     openai_config: OpenAIConfig = Field(default_factory=OpenAIConfig)
