@@ -42,3 +42,10 @@ export const SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISH
 // --- Auth routes ---
 export const AUTH_PAGE_PATH = "/auth";
 export const AUTH_CALLBACK_PATH = "/auth/callback";
+
+// --- Chat ---
+export const API_CHAT_PATH = "/api/v1/chat";
+export const CHAT_TITLE = "Assistente Rehabify";
+export const CHAT_PLACEHOLDER = "Escreva uma mensagem...";
+export const CHAT_WELCOME_MESSAGE =
+  "Olá! Posso ajudar com questões sobre este imóvel. Pergunte-me sobre custos, divisões, ou peça para comparar com outros imóveis.";

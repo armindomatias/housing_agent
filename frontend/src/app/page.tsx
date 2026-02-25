@@ -1,15 +1,18 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { MessageCircle } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { UrlInput } from "@/components/UrlInput";
 import { HowItWorks } from "@/components/HowItWorks";
 import { AnalysisLoadingSkeleton } from "@/components/AnalysisLoadingSkeleton";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
+import { ChatPanel } from "@/components/ChatPanel";
 import { usePropertyAnalysis } from "@/hooks/usePropertyAnalysis";
 import { useAuth } from "@/hooks/useAuth";
 import { AUTH_PAGE_PATH } from "@/lib/config";
+import { Button } from "@/components/ui/button";
 
 function HomeContent() {
   const router = useRouter();
@@ -28,6 +31,8 @@ function HomeContent() {
     reset,
   } = usePropertyAnalysis();
 
+  const [chatOpen, setChatOpen] = useState(false);
+
   const handleAnalyze = (url: string) => {
     if (!user) {
       router.push(
@@ -36,15 +41,21 @@ function HomeContent() {
       return;
     }
     analyze(url);
+    setChatOpen(true);
+  };
+
+  const handleReset = () => {
+    reset();
+    setChatOpen(false);
   };
 
   const showLanding = !isAnalyzing && !result;
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className={`${result ? "h-screen overflow-hidden" : "min-h-screen"} flex flex-col`}>
       <Navbar />
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 min-h-0 flex flex-col">
         {/* Hero section */}
         {showLanding && (
           <section className="bg-orange-500 py-20 px-4">
@@ -75,7 +86,7 @@ function HomeContent() {
                 <strong>Erro:</strong> {error}
               </p>
               <button
-                onClick={reset}
+                onClick={handleReset}
                 className="mt-2 text-sm text-destructive underline underline-offset-2"
               >
                 Tentar novamente
@@ -100,22 +111,57 @@ function HomeContent() {
           </div>
         )}
 
-        {/* Results */}
+        {/* Results — split layout on desktop, full-width + floating button on mobile */}
         {result && (
-          <div className="px-4 py-10">
-            <div className="max-w-4xl mx-auto">
-              <ResultsDisplay estimate={result} onReset={reset} />
+          <div className="flex-1 flex overflow-hidden">
+            {/* Results panel */}
+            <div
+              className={
+                chatOpen
+                  ? "flex-1 min-w-0 overflow-y-auto px-4 py-10"
+                  : "flex-1 min-w-0 overflow-y-auto px-4 py-10"
+              }
+            >
+              <div className="max-w-3xl mx-auto">
+                <ResultsDisplay estimate={result} onReset={handleReset} />
+              </div>
+              <footer className="mt-10 border-t border-border py-6 px-4">
+                <p className="text-center text-sm text-muted-foreground">
+                  Rehabify fornece estimativas indicativas. Para decisões de
+                  investimento, consulte profissionais qualificados.
+                </p>
+              </footer>
             </div>
+
+            {/* Chat panel — side panel on desktop (lg+) */}
+            {chatOpen && (
+              <div className="hidden lg:flex w-[30%] shrink-0 border-l border-border overflow-hidden">
+                <ChatPanel onCollapse={() => setChatOpen(false)} />
+              </div>
+            )}
           </div>
         )}
       </main>
 
-      <footer className="border-t border-border py-6 px-4">
-        <p className="text-center text-sm text-muted-foreground">
-          Rehabify fornece estimativas indicativas. Para decisões de
-          investimento, consulte profissionais qualificados.
-        </p>
-      </footer>
+      {/* Floating chat button — visible when results exist and chat is closed */}
+      {result && !chatOpen && (
+        <Button
+          onClick={() => setChatOpen(true)}
+          className="fixed bottom-6 right-6 rounded-full shadow-lg h-12 w-12 p-0"
+          aria-label="Abrir assistente"
+        >
+          <MessageCircle className="h-5 w-5" />
+        </Button>
+      )}
+
+      {!result && (
+        <footer className="border-t border-border py-6 px-4">
+          <p className="text-center text-sm text-muted-foreground">
+            Rehabify fornece estimativas indicativas. Para decisões de
+            investimento, consulte profissionais qualificados.
+          </p>
+        </footer>
+      )}
     </div>
   );
 }

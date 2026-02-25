@@ -608,7 +608,6 @@ async def trigger_property_analysis(
     from app.agents.context import write_knowledge_entry as wke
     from app.agents.summaries import generate_analysis_chat_summary, generate_portfolio_index_line
     from app.graphs.state import create_initial_state
-    from app.services import supabase_client as db
 
     graph = _get_renovation_graph(config)
     supabase = _get_supabase(config)
@@ -661,50 +660,17 @@ async def trigger_property_analysis(
         # Persist property + analysis to Supabase
         property_id = None
         if supabase:
-            try:
-                prop_db_data = {
-                    "url": url,
-                    "title": prop_data.get("title"),
-                    "price": int(prop_data.get("price") or 0) or None,
-                    "area_m2": prop_data.get("area_m2"),
-                    "num_rooms": prop_data.get("num_rooms"),
-                    "num_bathrooms": prop_data.get("num_bathrooms"),
-                    "location": prop_data.get("location"),
-                    "description": prop_data.get("description"),
-                    "image_urls": prop_data.get("image_urls"),
-                    "raw_scraped_data": prop_data,
-                    "price_per_m2": prop_data.get("price_per_m2"),
-                }
-                saved_prop = await db.upsert_property(supabase, prop_db_data)
-                property_id = saved_prop["id"]
+            from app.services.analysis_persistence import persist_analysis_to_db
 
-                # Save portfolio item
-                portfolio_item = await db.create_portfolio_item(
-                    supabase, user_id, property_id, index_summary=index_line
-                )
-                await db.update_portfolio_item(
-                    supabase, portfolio_item["id"], {"status": "analyzed"}
-                )
-
-                # Save analysis
-                await db.create_analysis(supabase, {
-                    "user_id": user_id,
-                    "property_id": property_id,
-                    "portfolio_item_id": portfolio_item["id"],
-                    "analysis_type": "renovation",
-                    "result_data": estimate_dict,
-                    "chat_summary": chat_summary,
-                    "status": "completed",
+            property_id = await persist_analysis_to_db(
+                supabase, url, user_id, estimate_dict,
+                conversation_id=state.get("conversation_id"),
+            )
+            if property_id is None:
+                updated_events.append({
+                    "type": "error",
+                    "message": "Erro ao guardar dados na base de dados. A análise foi feita mas os resultados podem não ter sido guardados.",
                 })
-
-                await db.log_action(
-                    supabase, user_id, "analysis_trigger", "analysis",
-                    entity_id=property_id,
-                    conversation_id=state.get("conversation_id"),
-                    new_value={"url": url, "chat_summary": chat_summary},
-                )
-            except Exception:
-                logger.exception("trigger_analysis_db_persist_failed", url=url)
 
         # Update knowledge base
         knowledge_key = f"portfolio/{property_id or url}/resumo"
